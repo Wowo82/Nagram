@@ -229,7 +229,7 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
         });
         options.add(R.drawable.msg_speed, "测试此节点", () -> pingNode(node, index));
         if (selectionMode) {
-            options.add(R.drawable.msg_done, "全选 / 取消全选", () -> {
+            options.add(R.drawable.msg_contacts, "全选 / 取消全选", () -> {
                 boolean selectAll = countSelected() < nodes.size();
                 for (int i = 0; i < nodes.size(); i++) {
                     nodes.get(i).selected = selectAll;
