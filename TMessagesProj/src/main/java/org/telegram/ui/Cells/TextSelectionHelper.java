@@ -703,6 +703,16 @@ public abstract class TextSelectionHelper<Cell extends TextSelectionHelper.Selec
 
     }
 
+    /**
+     * 文本选择工具条里点了「屏蔽」。
+     *
+     * @param messageObject 被选中的消息
+     * @param text          实际选中的文字，可能为 null
+     */
+    protected void onBlockClick(MessageObject messageObject, CharSequence text) {
+
+    }
+
     //fast way hide floating action mode for long time
     private final Runnable hideActionsRunnable = new Runnable() {
         @Override
@@ -1596,6 +1606,8 @@ public abstract class TextSelectionHelper<Cell extends TextSelectionHelper.Selec
 
     public static final int HYPEROS_AI = 6;
     private static final int TRANSLATE = 3;
+    /** 文本选择工具条中的「屏蔽」项。itemId 与系统/其它自定义 id 不冲突。 */
+    private static final int BLOCK = 9;
     private ActionMode.Callback createActionCallback() {
         final ActionMode.Callback callback = new ActionMode.Callback() {
             @Override
@@ -1603,17 +1615,24 @@ public abstract class TextSelectionHelper<Cell extends TextSelectionHelper.Selec
                 menu.add(Menu.NONE, android.R.id.copy, 0, android.R.string.copy);
                 menu.add(Menu.NONE, R.id.menu_quote, 1, LocaleController.getString(R.string.Quote));
                 menu.add(Menu.NONE, TRANSLATE, 2, LocaleController.getString(R.string.TranslateMessage));
-                menu.add(Menu.NONE, android.R.id.cut, 3, android.R.string.cut);
-                menu.add(Menu.NONE, android.R.id.paste, 4, android.R.string.paste);
-                menu.add(Menu.NONE, android.R.id.selectAll, 5, android.R.string.selectAll);
+                // 「屏蔽」紧跟「翻译」，与消息过滤规则联动
+                menu.add(Menu.NONE, BLOCK, 3, "屏蔽");
+                menu.add(Menu.NONE, android.R.id.cut, 4, android.R.string.cut);
+                menu.add(Menu.NONE, android.R.id.paste, 5, android.R.string.paste);
+                menu.add(Menu.NONE, android.R.id.selectAll, 6, android.R.string.selectAll);
                 if (SystemAiServiceHelper.INSTANCE.isSystemAiAvailable(textSelectionOverlay.getContext())) {
-                    menu.add(Menu.NONE, HYPEROS_AI, HYPEROS_AI, "AI");
+                    menu.add(Menu.NONE, HYPEROS_AI, 7, "AI");
                 }
                 return true;
             }
 
             @Override
             public boolean onPrepareActionMode(ActionMode mode, Menu menu) {
+                // 「屏蔽」只对聊天消息有意义，文章/简介等文本选择场景隐藏
+                MenuItem blockItem = menu.findItem(BLOCK);
+                if (blockItem != null) {
+                    blockItem.setVisible(selectedView instanceof ChatMessageCell);
+                }
                 MenuItem quoteItem = menu.findItem(R.id.menu_quote);
                 if (quoteItem != null) {
                     quoteItem.setVisible(canShowQuote());
@@ -1728,6 +1747,10 @@ public abstract class TextSelectionHelper<Cell extends TextSelectionHelper.Selec
                     SystemAiServiceHelper.INSTANCE.startSystemAiService(textSelectionOverlay, str.toString());
                     hideActions();
                     clear(true);
+                    return true;
+                } else if (itemId == BLOCK) {
+                    blockSelectedText();
+                    hideActions();
                     return true;
                 } else if (itemId == R.id.menu_quote) {
                     quoteText();
@@ -1847,6 +1870,22 @@ public abstract class TextSelectionHelper<Cell extends TextSelectionHelper.Selec
         } catch (Exception e) {
             return false;
         }
+    }
+
+    private void blockSelectedText() {
+        if (!isInSelectionMode()) {
+            return;
+        }
+        MessageObject messageObject = null;
+        if (selectedView instanceof ChatMessageCell) {
+            messageObject = ((ChatMessageCell) selectedView).getMessageObject();
+        }
+        if (messageObject == null) {
+            return;
+        }
+        CharSequence str = getSelectedText();
+        onBlockClick(messageObject, str);
+        clear(true);
     }
 
     private void quoteText() {

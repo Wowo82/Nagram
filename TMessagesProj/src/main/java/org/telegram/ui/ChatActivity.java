@@ -3829,6 +3829,14 @@ public class ChatActivity extends BaseFragment implements
         }
 
         @Override
+        protected void onBlockClick(MessageObject messageObject, CharSequence text) {
+            if (chatActivity == null || messageObject == null) {
+                return;
+            }
+            xyz.nextalone.nagram.ui.MessageBlocker.showDialog(chatActivity, messageObject, text);
+        }
+
+        @Override
         protected void onQuoteClick(MessageObject messageObject, int start, int end, CharSequence text) {
             if (messageObject == null) {
                 return;

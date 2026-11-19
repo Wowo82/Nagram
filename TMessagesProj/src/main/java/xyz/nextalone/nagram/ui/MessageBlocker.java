@@ -37,8 +37,17 @@ public final class MessageBlocker {
     private MessageBlocker() {
     }
 
-    /** 弹出屏蔽方式选择框。 */
+    /** 弹出屏蔽方式选择框（整个消息）。 */
     public static void showDialog(BaseFragment fragment, MessageObject msg) {
+        showDialog(fragment, msg, null);
+    }
+
+    /**
+     * 弹出屏蔽方式选择框。
+     *
+     * @param selectedText 文本选择工具条里选中的文字，为空时退回到整条消息的正文
+     */
+    public static void showDialog(BaseFragment fragment, MessageObject msg, CharSequence selectedText) {
         if (fragment == null || msg == null) {
             return;
         }
@@ -48,7 +57,10 @@ public final class MessageBlocker {
         }
         final Theme.ResourcesProvider resourcesProvider = fragment.getResourceProvider();
         final long senderId = getSenderId(msg);
-        final String keyword = buildKeyword(msg);
+        String keyword = normalizeKeyword(selectedText);
+        if (TextUtils.isEmpty(keyword)) {
+            keyword = buildKeyword(msg);
+        }
 
         final CharSequence[] items;
         final int[] actions; // 0 = 发送者，1 = 文字，2 = 编辑过滤器
@@ -119,7 +131,7 @@ public final class MessageBlocker {
         rules.add(rule);
         MessageFilterRules.saveRules(rules);
         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.messageFilterRulesChanged);
-        Toast.makeText(context, "已屏蔽发送者" + (TextUtils.isEmpty(name) ? "" : "：" + name) + "，重新进入会话后生效", Toast.LENGTH_SHORT).show();
+        Toast.makeText(context, "已屏蔽发送者" + (TextUtils.isEmpty(name) ? "" : "：" + name) + "，已立即生效", Toast.LENGTH_SHORT).show();
     }
 
     /** 把关键词追加到消息过滤器的全局正则。 */
@@ -135,7 +147,28 @@ public final class MessageBlocker {
             return;
         }
         MessageFilter.setRaw(TextUtils.isEmpty(old) ? quoted : old + "|" + quoted);
-        Toast.makeText(context, "已加入消息过滤器：" + keyword + "，重新进入会话后生效", Toast.LENGTH_SHORT).show();
+        Toast.makeText(context, "已加入消息过滤器：" + keyword + "，已立即生效", Toast.LENGTH_SHORT).show();
+    }
+
+    /**
+     * 把选中文字压成一行关键词。
+     *
+     * <p>多行选中时只取第一行，避免把整段话塞进过滤器；超长时截断。</p>
+     */
+    private static String normalizeKeyword(CharSequence text) {
+        if (TextUtils.isEmpty(text)) {
+            return "";
+        }
+        String s = text.toString().trim();
+        int lineEnd = s.indexOf('\n');
+        if (lineEnd >= 0) {
+            s = s.substring(0, lineEnd).trim();
+        }
+        s = s.replaceAll("\\s+", " ");
+        if (s.length() > MAX_KEYWORD_LENGTH) {
+            s = s.substring(0, MAX_KEYWORD_LENGTH);
+        }
+        return s;
     }
 
     /** 取消息正文/标题，过长时截断。 */
