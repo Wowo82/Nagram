@@ -43,8 +43,6 @@
     <string name="AutoReplaceRepeat">Kopyalama Olarak Tekrarlamak için Tekrarlamayı Otomatik Değiştir</string>
     <string name="AppIconGoogle">Google</string>
     <string name="AppIconColorful">Renkli</string>
-    <string name="AppIconDarkGreen">Koyu Yeşil</string>
-    <string name="AppIconNeon">Neon</string>
     <string name="AppIconNiello">Niello</string>
     <string name="AppIconBlue">Mavi</string>
     <string name="AppIconDarkBlue">Koyu Mavi</string>
@@ -104,7 +102,7 @@
     <string name="DisableSendReadStories">Okuma Hikayelerini Göndermeyi Devre Dışı Bırak</string>
     <string name="HideFilterMuteAll">Filtreyi gizle, tümünü kapat</string>
     <string name="UseLocalQuoteColor">Yerel alıntı rengini kullan</string>
-    <string name="ShowSquareAvatar">Kare avatarı göster</string>
+    <string name="AvatarCorners">Avatar corners</string>
     <string name="DisableProfileAvatarBlur">Disable Profile Avatar Blur</string>
     <string name="DisableCustomWallpaperUser">Kullanıcı özel duvar kağıdını devre dışı bırak</string>
     <string name="DisableCustomWallpaperChannel">Kanal özel duvar kağıdını devre dışı bırak</string>
@@ -131,7 +129,6 @@
     <string name="DisableClickCommandToSendHint">Yanlışlıkla dokunmayı önlemek için</string>
     <string name="DisableDialogsFloatingButton">İletişim Kutuları Kayan Düğmesini Devre Dışı Bırak</string>
     <string name="DisableFlagSecure">Güvenli İşaretlemeyi Devre Dışı Bırak</string>
-    <string name="CenterActionBarTitle">Başlığı işlem çubuğunda ortalayın</string>
     <string name="ShowQuickReplyInBotCommands">Bot Komutlarında Hızlı Yanıtı Göster</string>
     <string name="PushServiceType">Push Hizmet Türü</string>
     <string name="PushServiceTypeInApp">Uygulama İçi</string>
@@ -143,7 +140,6 @@
     <string name="SendMp4DocumentAsVideo">Mp4 belgesini video olarak gönder</string>
     <string name="StickersChooseShortNameForStickerPack">Paketiniz için kısa bir ad seçin.</string>
     <string name="StickersCopyStickerSet">Çıkartma Setini Kopyala</string>
-    <string name="DisableChannelMuteButton">Kanal sesini kapatma düğmesini devre dışı bırak</string>
     <string name="DisablePreviewVideoSoundShortcut">Önizleme videosu ses kısayolunu devre dışı bırak</string>
     <string name="DisablePreviewVideoSoundShortcutNotice">Önizleme video sesini etkinleştirmek için ses seviyesi tuşlarını devre dışı bırakın</string>
     <string name="DisableAutoWebLogin">Disable auto web login</string>
@@ -411,4 +407,9 @@
     <string name="StickerShapeRounded">Rounded</string>
     <string name="StickerShapeRoundedMsg">Message</string>
     <string name="ActionBar">Action Bar</string>
+    <string name="UserRestrictedBy">Restricted by %1$s</string>
+    <string name="ChannelBottomButton">Channel bottom button</string>
+    <string name="HideChannelGiftButton">Hide channel gift button</string>
+    <string name="IgnoreBlockedReplies">Also hide replies to blocked users</string>
+    <string name="RemoveMessageTail">Remove message tail</string>
 </resources>
