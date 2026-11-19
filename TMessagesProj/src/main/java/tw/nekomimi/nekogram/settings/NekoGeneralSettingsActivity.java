@@ -453,8 +453,8 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
                     builder.setDelegate((i) -> {
                         NekoConfig.openPGPApp.setConfigString(appsMap.get(i));
                         NekoConfig.openPGPKeyId.setConfigLong(0L);
-                        listAdapter.notifyItemChanged(cellGroup.rows.indexOf(pgpAppRow));
-                        listAdapter.notifyItemChanged(cellGroup.rows.indexOf(keyRow));
+                        cellGroup.notifyItemChangedSafe(listAdapter, pgpAppRow);
+                        cellGroup.notifyItemChangedSafe(listAdapter, keyRow);
 
                         if (i > 0) PGPUtil.recreateConnection();
                     });
@@ -607,19 +607,23 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
             } else if (NekoConfig.useOSMDroidMap.getKey().equals(key)) {
                 boolean enabled = (Boolean) newValue;
                 ((ConfigCellTextCheck) mapDriftingFixForGoogleMapsRow).setEnabled(!enabled);
-                listAdapter.notifyItemChanged(cellGroup.rows.indexOf(mapDriftingFixForGoogleMapsRow));
+                cellGroup.notifyItemChangedSafe(listAdapter, mapDriftingFixForGoogleMapsRow);
             } else if (key.equals(NekoConfig.useTelegramTranslateInChat.getKey())) {
-                var cell = (TextSettingsCell) (listView.findViewHolderForAdapterPosition(cellGroup.rows.indexOf(translationProviderRow)).itemView);
+                final int providerPosition = cellGroup.rows.indexOf(translationProviderRow);
+                final RecyclerView.ViewHolder providerHolder = providerPosition >= 0
+                        ? listView.findViewHolderForAdapterPosition(providerPosition) : null;
+                final TextSettingsCell cell = providerHolder != null && providerHolder.itemView instanceof TextSettingsCell
+                        ? (TextSettingsCell) providerHolder.itemView : null;
                 if (NekoConfig.useTelegramTranslateInChat.Bool()) {
                     NekoConfig.translationProvider.setConfigInt(Translator.providerTelegram);
                     ((ConfigCellCustom) translationProviderRow).setEnabled(false);
-                    cell.setEnabled(false);
+                    if (cell != null) cell.setEnabled(false);
                 } else {
                     ((ConfigCellCustom) translationProviderRow).setEnabled(true);
-                    cell.setEnabled(true);
+                    if (cell != null) cell.setEnabled(true);
                 }
                 updateRows();
-                listAdapter.notifyItemChanged(cellGroup.rows.indexOf(translationProviderRow));
+                cellGroup.notifyItemChangedSafe(listAdapter, translationProviderRow);
             } else if (key.equals(NaConfig.INSTANCE.getLlmProvider().getKey())) {
                 // Rebuild LLM rows to show/hide API format and URL
                 updateRows();
@@ -636,7 +640,7 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
             } else if (key.equals(NaConfig.INSTANCE.getCustomTitleUserName().getKey())) {
                 boolean enabled = (Boolean) newValue;
                 ((ConfigCellTextInput) customTitleRow).setEnabled(!enabled);
-                listAdapter.notifyItemChanged(cellGroup.rows.indexOf(customTitleRow));
+                cellGroup.notifyItemChangedSafe(listAdapter, customTitleRow);
                 if (actionBarPreviewCell != null) {
                     actionBarPreviewCell.updateTitle();
                 }
@@ -686,7 +690,7 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
                     long keyId = result.getLongExtra(OpenPgpApi.EXTRA_SIGN_KEY_ID, 0L);
                     NekoConfig.openPGPKeyId.setConfigLong(keyId);
 
-                    listAdapter.notifyItemChanged(cellGroup.rows.indexOf(keyRow));
+                    cellGroup.notifyItemChangedSafe(listAdapter, keyRow);
 
                     break;
                 }

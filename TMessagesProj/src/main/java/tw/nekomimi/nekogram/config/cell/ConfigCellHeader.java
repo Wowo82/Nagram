@@ -5,6 +5,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import org.telegram.ui.Cells.HeaderCell;
 
 import tw.nekomimi.nekogram.config.CellGroup;
+import xyz.nextalone.nagram.ui.CollapsibleHeaderCell;
 
 public class ConfigCellHeader extends AbstractConfigCell {
     private final String title;
@@ -22,6 +23,12 @@ public class ConfigCellHeader extends AbstractConfigCell {
     }
 
     public void onBindViewHolder(RecyclerView.ViewHolder holder) {
+        if (holder.itemView instanceof CollapsibleHeaderCell) {
+            // 折叠分组标题：带展开/收起箭头
+            final CollapsibleHeaderCell headerCell = (CollapsibleHeaderCell) holder.itemView;
+            headerCell.setTextAndExpanded(title, cellGroup == null || !cellGroup.isCollapsed(this));
+            return;
+        }
         HeaderCell headerCell = (HeaderCell) holder.itemView;
         headerCell.setText(title);
     }

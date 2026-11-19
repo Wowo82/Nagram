@@ -258,6 +258,8 @@ public final class MessageFilterRules {
     /** 判断一条消息是否应被完全隐藏。 */
     public static boolean shouldHide(MessageObject msg) {
         if (msg == null) return false;
+        // 「消息过滤器」优先：全局关键词黑名单，命中即隐藏整条消息
+        if (MessageFilter.shouldHide(msg)) return true;
         long senderId = 0;
         long viaBotId = 0;
         if (msg.messageOwner != null) {

@@ -88,9 +88,16 @@ public class BaseNekoXSettingsActivity extends BaseFragment {
         FrameLayout frameLayout = (FrameLayout) fragmentView;
 
         listView = new RecyclerListView(context);
-        listView.setSections();
-        listView.setSectionsDrawBackground(true);
+        if (!useCardStyle()) {
+            listView.setSections();
+            listView.setSectionsDrawBackground(true);
+        }
         listView.setVerticalScrollBarEnabled(false);
+        if (useCardStyle() && useCollapsibleGroups() && cellGroup != null) {
+            // 必须在 adapter 创建前完成折叠裁剪，否则 itemCount 与 rows 不一致
+            cellGroup.collapsible = true;
+            cellGroup.setCollapsible(getClass().getSimpleName());
+        }
         listView.setLayoutManager(layoutManager = new LinearLayoutManager(context, LinearLayoutManager.VERTICAL, false));
         frameLayout.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP | Gravity.LEFT));
 
@@ -99,69 +106,45 @@ public class BaseNekoXSettingsActivity extends BaseFragment {
         return fragmentView;
     }
 
-    /** 是否使用「每行一张圆角卡片」的设置项样式（参考 iOS 风格）。 */
+    /** 是否使用卡片 + 折叠分组的设置项样式（参考 iOS 风格）。 */
     protected boolean useCardStyle() {
         return false;
     }
 
+    /** 卡片内每个分组是否可点击标题折叠，默认开启。 */
+    protected boolean useCollapsibleGroups() {
+        return true;
+    }
+
+    protected xyz.nextalone.nagram.ui.CardSettingsDecoration cardDecoration;
+
     /** 需要在子类 setAdapter 之后调用一次。 */
     protected void applyCardStyle() {
-        if (listView == null) {
+        if (listView == null || cellGroup == null) {
             return;
         }
         listView.setSectionsDrawBackground(false);
-        listView.setSections(
-                view -> !(view instanceof HeaderCell || view instanceof TextInfoPrivacyCell || view instanceof ShadowSectionCell),
-                viewType -> viewType != CellGroup.ITEM_TYPE_HEADER && viewType != CellGroup.ITEM_TYPE_TEXT && viewType != CellGroup.ITEM_TYPE_DIVIDER,
-                AndroidUtilities.dp(12), AndroidUtilities.dp(14), true);
-        listView.setLegacySections(true);
-        listView.addItemDecoration(new xyz.nextalone.nagram.ui.CardSettingsDecoration());
+        listView.setClipToPadding(false);
+        listView.setPadding(0, AndroidUtilities.dp(8), 0, AndroidUtilities.dp(8));
         if (listAdapter != null) {
-            listAdapter.registerAdapterDataObserver(new RecyclerView.AdapterDataObserver() {
-                @Override
-                public void onChanged() {
-                    rebuildForcedSections();
-                }
-
-                @Override
-                public void onItemRangeChanged(int positionStart, int itemCount) {
-                    rebuildForcedSections();
-                }
-
-                @Override
-                public void onItemRangeInserted(int positionStart, int itemCount) {
-                    rebuildForcedSections();
-                }
-
-                @Override
-                public void onItemRangeRemoved(int positionStart, int itemCount) {
-                    rebuildForcedSections();
-                }
-
-                @Override
-                public void onItemRangeMoved(int fromPosition, int toPosition, int itemCount) {
-                    rebuildForcedSections();
-                }
-            });
+            cellGroup.setListAdapter(listView, listAdapter);
         }
-        rebuildForcedSections();
-    }
+        if (cardDecoration == null) {
+            cardDecoration = new xyz.nextalone.nagram.ui.CardSettingsDecoration(
+                    new xyz.nextalone.nagram.ui.CardSettingsDecoration.GroupProvider() {
+                        @Override
+                        public int getGroupStart(int position) {
+                            return cellGroup.getSectionStart(position);
+                        }
 
-    protected void rebuildForcedSections() {
-        if (listView == null || listAdapter == null) {
-            return;
+                        @Override
+                        public int getGroupEnd(int position) {
+                            return cellGroup.getSectionEnd(position);
+                        }
+                    });
+            listView.addItemDecoration(cardDecoration);
         }
-        ArrayList<Long> sections = new ArrayList<>();
-        final int count = listAdapter.getItemCount();
-        for (int i = 0; i < count; i++) {
-            final int type = listAdapter.getItemViewType(i);
-            if (type == CellGroup.ITEM_TYPE_HEADER || type == CellGroup.ITEM_TYPE_TEXT || type == CellGroup.ITEM_TYPE_DIVIDER) {
-                continue;
-            }
-            sections.add(((long) i << 32) | (i & 0xFFFFFFFFL));
-        }
-        listView.forcedSections = sections;
-        listView.invalidate();
+        listView.invalidateItemDecorations();
     }
 
     @Override
@@ -171,11 +154,16 @@ public class BaseNekoXSettingsActivity extends BaseFragment {
 
     protected void updateRows() {
         if (listAdapter == null) {
+            cellGroup.beginEdit();
             setCanNotChange();
+            cellGroup.endEdit();
             return;
         }
         ArrayList<AbstractConfigCell> rows = new ArrayList<>(cellGroup.rows);
+        // 折叠分组时先临时展开，保证 setCanNotChange 中的 indexOf/insert 索引正确
+        cellGroup.beginEdit();
         setCanNotChange();
+        cellGroup.endEdit();
         DiffUtil.calculateDiff(new ConfigCellDiffCallback(rows, cellGroup.rows)).dispatchUpdatesTo(listAdapter);
     }
 
@@ -389,6 +377,9 @@ public class BaseNekoXSettingsActivity extends BaseFragment {
             int position = holder.getAdapterPosition();
             AbstractConfigCell a = cellGroup.rows.get(position);
             if (a != null) {
+                if (a.getType() == CellGroup.ITEM_TYPE_HEADER) {
+                    return cellGroup.collapsible;
+                }
                 return a.isEnabled();
             }
             return true;
@@ -436,7 +427,27 @@ public class BaseNekoXSettingsActivity extends BaseFragment {
                     view = new TextCheckCell(mContext);
                     break;
                 case CellGroup.ITEM_TYPE_HEADER:
-                    view = new HeaderCell(mContext);
+                    if (cellGroup.collapsible) {
+                        xyz.nextalone.nagram.ui.CollapsibleHeaderCell headerCell =
+                                new xyz.nextalone.nagram.ui.CollapsibleHeaderCell(mContext);
+                        headerCell.setOnClickListener(v -> {
+                            final int position = listView.getChildAdapterPosition(v);
+                            if (position == RecyclerView.NO_POSITION || position >= cellGroup.rows.size()) {
+                                return;
+                            }
+                            final AbstractConfigCell header = cellGroup.rows.get(position);
+                            cellGroup.toggleSection(header);
+                            if (listAdapter != null) {
+                                listAdapter.notifyDataSetChanged();
+                            }
+                            if (cardDecoration != null) {
+                                listView.invalidateItemDecorations();
+                            }
+                        });
+                        view = headerCell;
+                    } else {
+                        view = new HeaderCell(mContext);
+                    }
                     break;
                 case CellGroup.ITEM_TYPE_TEXT_DETAIL:
                     view = new TextDetailSettingsCell(mContext);

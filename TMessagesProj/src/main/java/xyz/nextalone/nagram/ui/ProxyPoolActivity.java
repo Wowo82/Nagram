@@ -8,6 +8,7 @@ package xyz.nextalone.nagram.ui;
 
 import android.content.Context;
 import android.view.View;
+import android.view.ViewGroup;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
@@ -20,12 +21,16 @@ import org.telegram.messenger.Utilities;
 import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.SimpleActionBar;
 import org.telegram.ui.ActionBar.SimpleActionBarMenu;
+import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Cells.CheckBoxCell;
+
+import xyz.nextalone.nagram.ui.ProxyNodeCell;
 import org.telegram.ui.Cells.HeaderCell;
 import org.telegram.ui.Cells.TextInfoPrivacyCell;
 import org.telegram.ui.Cells.TextSettingsCell;
 import org.telegram.ui.Components.BulletinFactory;
 import org.telegram.ui.Components.ItemOptions;
+import org.telegram.ui.Components.RecyclerListView;
 import org.telegram.utils.proxy.ProxySettings;
 
 import java.io.BufferedReader;
@@ -593,10 +598,38 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
         }
     }
 
+    private int pingColor(int ping) {
+        if (ping == PING_NONE) {
+            return Theme.getColor(Theme.key_windowBackgroundWhiteGrayText3);
+        }
+        if (ping == PING_FAILED) {
+            return 0xFFE53935;
+        }
+        if (ping <= 200) {
+            return 0xFF43A047;
+        }
+        if (ping <= 600) {
+            return 0xFFFB8C00;
+        }
+        return 0xFFE53935;
+    }
+
     private class ListAdapter extends BaseListAdapter {
 
         ListAdapter(Context context) {
             super(context);
+        }
+
+        @NonNull
+        @Override
+        public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            if (viewType == TYPE_CHECKBOX2) {
+                ProxyNodeCell cell = new ProxyNodeCell(mContext);
+                cell.setLayoutParams(new RecyclerView.LayoutParams(
+                        RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT));
+                return new RecyclerListView.Holder(cell);
+            }
+            return super.onCreateViewHolder(parent, viewType);
         }
 
         @Override
@@ -625,11 +658,12 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
                     break;
                 }
                 case TYPE_CHECKBOX2: {
-                    CheckBoxCell checkBoxCell = (CheckBoxCell) holder.itemView;
                     int index = position - nodeStartRow;
-                    if (index >= 0 && index < nodes.size()) {
+                    if (index >= 0 && index < nodes.size() && holder.itemView instanceof ProxyNodeCell) {
                         ProxyNode node = nodes.get(index);
-                        checkBoxCell.setText(node.label(), node.detailText(), node.selected, divider);
+                        final String time = node.time.isEmpty() ? node.protocol() : "入库 " + node.time;
+                        ((ProxyNodeCell) holder.itemView).setNode(
+                                node.label(), time, node.pingText(), pingColor(node.ping), node.selected, divider);
                     }
                     break;
                 }

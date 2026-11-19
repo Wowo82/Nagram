@@ -66,6 +66,7 @@ public class NekoSettingsActivity extends BaseNekoSettingsActivity {
     private int passcodeRow;
     private int experimentRow;
     private int messageFilterRow;
+    private int filterRulesRow;
     private int debugRow;
     private int categories2Row;
 
@@ -117,6 +118,8 @@ public class NekoSettingsActivity extends BaseNekoSettingsActivity {
         } else if (position == experimentRow) {
             presentFragment(new NekoExperimentalSettingsActivity());
         } else if (position == messageFilterRow) {
+            xyz.nextalone.nagram.ui.MessageFilter.showDialog(this);
+        } else if (position == filterRulesRow) {
             presentFragment(new xyz.nextalone.nagram.ui.MessageFilterRulesActivity());
         } else if (position == debugRow) {
             presentFragment(new NekoDebugSettingsActivity());
@@ -187,6 +190,7 @@ public class NekoSettingsActivity extends BaseNekoSettingsActivity {
         }
         experimentRow = addRow("experiment");
         messageFilterRow = addRow("messageFilter");
+        filterRulesRow = addRow("filterRules");
         debugRow = addRow("debug");
         categories2Row = addRow();
 
@@ -262,7 +266,9 @@ public class NekoSettingsActivity extends BaseNekoSettingsActivity {
                     } else if (position == experimentRow) {
                         textCell.setTextAndIcon(LocaleController.getString(R.string.Experiment), R.drawable.msg_fave, divider);
                     } else if (position == messageFilterRow) {
-                        textCell.setTextAndIcon("消息过滤器", R.drawable.msg_block, divider);
+                        textCell.setTextAndIcon("消息过滤器", R.drawable.msg_info, divider);
+                    } else if (position == filterRulesRow) {
+                        textCell.setTextAndIcon("消息过滤规则", R.drawable.msg_block, divider);
                     } else if (position == debugRow) {
                         textCell.setTextAndIcon(LocaleController.getString(R.string.DebugMenu), R.drawable.msg_info, divider);
                     }
