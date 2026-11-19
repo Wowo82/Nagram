@@ -13,6 +13,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.MessagesController;
+import org.telegram.messenger.NotificationCenter;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -158,6 +159,8 @@ public final class MessageFilterRules {
             // 序列化失败时保持旧值，避免把存储写坏
         }
         invalidateCache();
+        // 规则变化后通知聊天页立即重新过滤已加载的消息
+        NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.messageFilterRulesChanged);
     }
 
     public static void invalidateCache() {

@@ -3126,6 +3126,8 @@ public class ChatActivity extends BaseFragment implements
 
         // na: unread count
         getNotificationCenter().addObserver(this, NotificationCenter.dialogsUnreadCounterChanged);
+        // 消息过滤器 / 规则变更后立即清理当前会话中已命中的消息
+        NotificationCenter.getGlobalInstance().addObserver(this, NotificationCenter.messageFilterRulesChanged);
 
         if (chatMode != MODE_SCHEDULED) {
             if (threadMessageId == 0) {
@@ -3651,6 +3653,7 @@ public class ChatActivity extends BaseFragment implements
 
         // na: unread count
         getNotificationCenter().removeObserver(this, NotificationCenter.dialogsUnreadCounterChanged);
+        NotificationCenter.getGlobalInstance().removeObserver(this, NotificationCenter.messageFilterRulesChanged);
 
         getNotificationCenter().removePostponeNotificationsCallback(postponeNotificationsWhileLoadingCallback);
         getMessagesController().setLastCreatedDialogId(dialog_id, chatMode == MODE_SCHEDULED, false);
@@ -11407,6 +11410,7 @@ public class ChatActivity extends BaseFragment implements
         }
 
         actionModeOtherItem.addSubItem(nkbtn_translate, R.drawable.ic_translate, LocaleController.getString("Translate", R.string.Translate));
+        actionModeOtherItem.addSubItem(nkbtn_block, R.drawable.msg_block2, "屏蔽");
         if (NekoConfig.showShareMessages.Bool())
             actionModeOtherItem.addSubItem(nkbtn_sharemessage, R.drawable.msg_shareout, LocaleController.getString("ShareMessages", R.string.ShareMessages));
         actionModeOtherItem.addSubItem(nkbtn_unpin, R.drawable.msg_unpin, LocaleController.getString("UnpinMessage", R.string.UnpinMessage));
@@ -22373,6 +22377,8 @@ public class ChatActivity extends BaseFragment implements
     public void didReceivedNotification(int id, int account, final Object... args) {
         if (id == NotificationCenter.messagesDidLoad) {
             didReceivedNotification_messagesDidLoad(id, account, args);
+        } else if (id == NotificationCenter.messageFilterRulesChanged) {
+            applyMessageFiltersToLoadedMessages();
         } else {
             didReceivedNotification2(id, account, args);
             didReceivedNotification3(id, account, args);
@@ -28224,6 +28230,36 @@ public class ChatActivity extends BaseFragment implements
             sponsoredMessagesCount++;
         }
         return sponsoredMessagesCount;
+    }
+
+    /**
+     * 过滤规则变化后，把当前会话里已经加载、现在命中规则的消息移除。
+     *
+     * 走 {@link #processDeletedMessages} 这条纯 UI 路径（删除行、重建分组、刷新列表），
+     * 不删除服务器消息，也不写数据库。
+     */
+    private void applyMessageFiltersToLoadedMessages() {
+        if (messages == null || messages.isEmpty() || isInScheduleMode()) {
+            return;
+        }
+        final ArrayList<Integer> ids = new ArrayList<>();
+        for (int a = 0, N = messages.size(); a < N; a++) {
+            MessageObject object = messages.get(a);
+            if (object == null || object.getId() == 0 || object.isDateObject) {
+                continue;
+            }
+            if (xyz.nextalone.nagram.ui.MessageFilterRules.shouldHide(object)) {
+                ids.add(object.getId());
+            }
+        }
+        if (ids.isEmpty()) {
+            return;
+        }
+        long channelId = 0;
+        if (currentChat != null && ChatObject.isChannel(currentChat)) {
+            channelId = -dialog_id;
+        }
+        processDeletedMessages(ids, channelId, false);
     }
 
     private void processDeletedMessages(ArrayList<Integer> markAsDeletedMessages, long channelId, boolean sent) {
@@ -46762,6 +46798,15 @@ public class ChatActivity extends BaseFragment implements
             }
         } else if (id == nkbtn_translate) {
             nkbtn_translate(null, selectedObjectGroup);
+        } else if (id == nkbtn_block) {
+            MessageObject target = selectedObject;
+            if (target == null) {
+                ArrayList<MessageObject> selected = getSelectedMessages();
+                if (!selected.isEmpty()) {
+                    target = selected.get(0);
+                }
+            }
+            xyz.nextalone.nagram.ui.MessageBlocker.showDialog(this, target);
         } else if (id == nkbtn_unpin) {
             for (MessageObject selectedMessage : getSelectedMessages()) {
                 if (selectedMessage.messageOwner.pinned) {
