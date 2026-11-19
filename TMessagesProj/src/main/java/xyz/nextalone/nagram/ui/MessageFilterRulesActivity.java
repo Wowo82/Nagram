@@ -261,9 +261,8 @@ public class MessageFilterRulesActivity extends BaseNekoSettingsActivity {
 
         addDialogLabel(container, context, "执行动作");
         final RadioGroup actionGroup = new RadioGroup(context);
-        addRadioButton(context, actionGroup, 2000 + MessageFilterRules.ACTION_HIDE, "隐藏消息", source == null || source.action == MessageFilterRules.ACTION_HIDE);
-        addRadioButton(context, actionGroup, 2000 + MessageFilterRules.ACTION_COLLAPSE, "折叠显示", source != null && source.action == MessageFilterRules.ACTION_COLLAPSE);
-        addRadioButton(context, actionGroup, 2000 + MessageFilterRules.ACTION_SPOILER, "剧透遮挡", source != null && source.action == MessageFilterRules.ACTION_SPOILER);
+        // 折叠 / 剧透暂未实现渲染，只保留「隐藏」避免误选后看起来不生效
+        addRadioButton(context, actionGroup, 2000 + MessageFilterRules.ACTION_HIDE, "隐藏消息", true);
         container.addView(actionGroup);
 
         new AlertDialog.Builder(context)

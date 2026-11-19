@@ -269,7 +269,9 @@ public final class MessageFilterRules {
             senderId = msg.getSenderId();
             viaBotId = msg.messageOwner.via_bot_id;
         }
-        return match(msg.messageText, msg.caption, senderId, viaBotId) == ACTION_HIDE;
+        // 目前折叠 / 剧透没有对应的渲染实现，命中即按隐藏处理，
+        // 避免用户选了「折叠显示」却看不到任何效果。
+        return match(msg.messageText, msg.caption, senderId, viaBotId) != ACTION_NONE;
     }
 
     private static boolean containsText(CharSequence src, String needle, boolean caseInsensitive) {
