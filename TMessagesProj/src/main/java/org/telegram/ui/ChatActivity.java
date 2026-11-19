@@ -22961,6 +22961,9 @@ public class ChatActivity extends BaseFragment implements
             if (obj.type < 0 || loadIndex == 1 && action instanceof TLRPC.TL_messageActionChatMigrateTo) {
                 continue;
             }
+            if (xyz.nextalone.nagram.ui.MessageFilterRules.shouldHide(obj)) {
+                continue;
+            }
 
             if (currentChat != null && currentChat.creator && (action instanceof TLRPC.TL_messageActionChatCreate || dropPhotoAction != null && action == dropPhotoAction)) {
                 continue;
