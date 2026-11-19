@@ -99,6 +99,71 @@ public class BaseNekoXSettingsActivity extends BaseFragment {
         return fragmentView;
     }
 
+    /** 是否使用「每行一张圆角卡片」的设置项样式（参考 iOS 风格）。 */
+    protected boolean useCardStyle() {
+        return false;
+    }
+
+    /** 需要在子类 setAdapter 之后调用一次。 */
+    protected void applyCardStyle() {
+        if (listView == null) {
+            return;
+        }
+        listView.setSectionsDrawBackground(false);
+        listView.setSections(
+                view -> !(view instanceof HeaderCell || view instanceof TextInfoPrivacyCell || view instanceof ShadowSectionCell),
+                viewType -> viewType != CellGroup.ITEM_TYPE_HEADER && viewType != CellGroup.ITEM_TYPE_TEXT && viewType != CellGroup.ITEM_TYPE_DIVIDER,
+                AndroidUtilities.dp(12), AndroidUtilities.dp(14), true);
+        listView.setLegacySections(true);
+        listView.addItemDecoration(new xyz.nextalone.nagram.ui.CardSettingsDecoration());
+        if (listAdapter != null) {
+            listAdapter.registerAdapterDataObserver(new RecyclerView.AdapterDataObserver() {
+                @Override
+                public void onChanged() {
+                    rebuildForcedSections();
+                }
+
+                @Override
+                public void onItemRangeChanged(int positionStart, int itemCount) {
+                    rebuildForcedSections();
+                }
+
+                @Override
+                public void onItemRangeInserted(int positionStart, int itemCount) {
+                    rebuildForcedSections();
+                }
+
+                @Override
+                public void onItemRangeRemoved(int positionStart, int itemCount) {
+                    rebuildForcedSections();
+                }
+
+                @Override
+                public void onItemRangeMoved(int fromPosition, int toPosition, int itemCount) {
+                    rebuildForcedSections();
+                }
+            });
+        }
+        rebuildForcedSections();
+    }
+
+    protected void rebuildForcedSections() {
+        if (listView == null || listAdapter == null) {
+            return;
+        }
+        ArrayList<Long> sections = new ArrayList<>();
+        final int count = listAdapter.getItemCount();
+        for (int i = 0; i < count; i++) {
+            final int type = listAdapter.getItemViewType(i);
+            if (type == CellGroup.ITEM_TYPE_HEADER || type == CellGroup.ITEM_TYPE_TEXT || type == CellGroup.ITEM_TYPE_DIVIDER) {
+                continue;
+            }
+            sections.add(((long) i << 32) | (i & 0xFFFFFFFFL));
+        }
+        listView.forcedSections = sections;
+        listView.invalidate();
+    }
+
     @Override
     protected RecyclerListView getListViewForSimpleGlass() {
         return listView;

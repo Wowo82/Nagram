@@ -237,6 +237,8 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
     private final AbstractConfigCell divider4 = cellGroup.appendCell(new ConfigCellDivider());
 
     private final AbstractConfigCell header5 = cellGroup.appendCell(new ConfigCellHeader(LocaleController.getString("Appearance")));
+    private final AbstractConfigCell showContactsTabRow = cellGroup.appendCell(new ConfigCellCustom("nagram_show_contacts_tab", CellGroup.ITEM_TYPE_TEXT_CHECK, true));
+    private final AbstractConfigCell showProfileTabRow = cellGroup.appendCell(new ConfigCellCustom("nagram_show_profile_tab", CellGroup.ITEM_TYPE_TEXT_CHECK, true));
     private final AbstractConfigCell typefaceRow = cellGroup.appendCell(new ConfigCellTextCheck(NekoConfig.typeface));
     private final AbstractConfigCell transparentStatusBarRow = cellGroup.appendCell(new ConfigCellTextCheck(NekoConfig.transparentStatusBar));
     private final AbstractConfigCell iconDecorationRow = cellGroup.appendCell(new ConfigCellSelectBox(null, NaConfig.INSTANCE.getIconDecoration(), new String[]{
@@ -377,6 +379,9 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
             ((DefaultItemAnimator) listView.getItemAnimator()).setSupportsChangeAnimations(false);
         }
         listView.setAdapter(listAdapter);
+        if (useCardStyle()) {
+            applyCardStyle();
+        }
         listView.setItemSelectorColorProvider(position ->
                 position == cellGroup.rows.indexOf(filterTabsPreviewRow) ? Color.TRANSPARENT : null);
 
@@ -398,6 +403,18 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
                     }
                 }
             } else if (a instanceof ConfigCellCustom) { // Custom OnClick
+                if (position == cellGroup.rows.indexOf(showContactsTabRow)) {
+                    boolean visible = !org.telegram.ui.MainTabsActivity.isContactsTabVisible();
+                    org.telegram.ui.MainTabsActivity.setContactsTabVisible(visible);
+                    ((TextCheckCell) view).setChecked(visible);
+                    return;
+                }
+                if (position == cellGroup.rows.indexOf(showProfileTabRow)) {
+                    boolean visible = !org.telegram.ui.MainTabsActivity.isProfileTabVisible();
+                    org.telegram.ui.MainTabsActivity.setProfileTabVisible(visible);
+                    ((TextCheckCell) view).setChecked(visible);
+                    return;
+                }
                 if (position == cellGroup.rows.indexOf(filterTabsPreviewRow)) {
                     return;
                 }
@@ -787,7 +804,14 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
             if (a != null) {
                 if (a instanceof ConfigCellCustom) {
                     // Custom binds
-                    if (holder.itemView instanceof TextSettingsCell) {
+                    if (holder.itemView instanceof TextCheckCell) {
+                        TextCheckCell checkCell = (TextCheckCell) holder.itemView;
+                        if (position == cellGroup.rows.indexOf(showContactsTabRow)) {
+                            checkCell.setTextAndCheck("显示「联系人」标签", org.telegram.ui.MainTabsActivity.isContactsTabVisible(), divider);
+                        } else if (position == cellGroup.rows.indexOf(showProfileTabRow)) {
+                            checkCell.setTextAndCheck("显示「个人资料」标签", org.telegram.ui.MainTabsActivity.isProfileTabVisible(), divider);
+                        }
+                    } else if (holder.itemView instanceof TextSettingsCell) {
                         TextSettingsCell textCell = (TextSettingsCell) holder.itemView;
                         if (position == cellGroup.rows.indexOf(translationProviderRow)) {
                             String value;
@@ -888,6 +912,11 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
             }
             return super.onCreateViewHolderView(viewType);
         }
+    }
+
+    @Override
+    protected boolean useCardStyle() {
+        return true;
     }
 
     @Override

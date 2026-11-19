@@ -42,6 +42,7 @@ import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.RecyclerListView;
 import org.telegram.ui.Components.URLSpanNoUnderline;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Locale;
 
@@ -133,6 +134,10 @@ public abstract class BaseNekoSettingsActivity extends BaseFragment {
 
         listAdapter = createAdapter(context);
 
+        if (useCardStyle()) {
+            applyCardStyle();
+        }
+
         listView.setAdapter(listAdapter);
         listView.setOnItemClickListener(this::onItemClick);
         listView.setOnItemLongClickListener((view, position, x, y) -> {
@@ -154,6 +159,67 @@ public abstract class BaseNekoSettingsActivity extends BaseFragment {
         });
 
         return fragmentView;
+    }
+
+    /** 是否使用「每行一张圆角卡片」的设置项样式（参考 iOS 风格）。 */
+    protected boolean useCardStyle() {
+        return false;
+    }
+
+    private void applyCardStyle() {
+        // 关闭整页绘制模式，改用 legacy sections 的圆角分组绘制
+        listView.setSectionsDrawBackground(false);
+        // 标题行与说明行不绘制卡片背景，其余每行都作为独立卡片
+        listView.setSections(
+                view -> !(view instanceof HeaderCell || view instanceof TextInfoPrivacyCell || view instanceof ShadowSectionCell),
+                viewType -> viewType != TYPE_HEADER && viewType != TYPE_INFO_PRIVACY && viewType != TYPE_SHADOW,
+                AndroidUtilities.dp(12), AndroidUtilities.dp(14), true);
+        listView.setLegacySections(true);
+        listView.addItemDecoration(new xyz.nextalone.nagram.ui.CardSettingsDecoration());
+        listAdapter.registerAdapterDataObserver(new RecyclerView.AdapterDataObserver() {
+            @Override
+            public void onChanged() {
+                rebuildForcedSections();
+            }
+
+            @Override
+            public void onItemRangeChanged(int positionStart, int itemCount) {
+                rebuildForcedSections();
+            }
+
+            @Override
+            public void onItemRangeInserted(int positionStart, int itemCount) {
+                rebuildForcedSections();
+            }
+
+            @Override
+            public void onItemRangeRemoved(int positionStart, int itemCount) {
+                rebuildForcedSections();
+            }
+
+            @Override
+            public void onItemRangeMoved(int fromPosition, int toPosition, int itemCount) {
+                rebuildForcedSections();
+            }
+        });
+    }
+
+    /** 把每个设置行设为独立的 section，从而让每行单独绘制成一张圆角卡片。 */
+    private void rebuildForcedSections() {
+        if (listView == null || listAdapter == null) {
+            return;
+        }
+        ArrayList<Long> sections = new ArrayList<>();
+        final int count = listAdapter.getItemCount();
+        for (int i = 0; i < count; i++) {
+            final int type = listAdapter.getItemViewType(i);
+            if (type == TYPE_HEADER || type == TYPE_INFO_PRIVACY || type == TYPE_SHADOW) {
+                continue;
+            }
+            sections.add(((long) i << 32) | (i & 0xFFFFFFFFL));
+        }
+        listView.forcedSections = sections;
+        listView.invalidate();
     }
 
     @Override

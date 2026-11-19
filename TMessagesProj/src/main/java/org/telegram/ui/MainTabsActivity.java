@@ -113,6 +113,25 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
         MessagesController.getGlobalMainSettings().edit().putBoolean(ACCOUNT_LIST_COLLAPSED_KEY, collapsed).apply();
     }
 
+    private static final String KEY_SHOW_CONTACTS_TAB = "nagram_show_contacts_tab";
+    private static final String KEY_SHOW_PROFILE_TAB = "nagram_show_profile_tab";
+
+    public static boolean isContactsTabVisible() {
+        return MessagesController.getGlobalMainSettings().getBoolean(KEY_SHOW_CONTACTS_TAB, true);
+    }
+
+    public static void setContactsTabVisible(boolean visible) {
+        MessagesController.getGlobalMainSettings().edit().putBoolean(KEY_SHOW_CONTACTS_TAB, visible).apply();
+    }
+
+    public static boolean isProfileTabVisible() {
+        return MessagesController.getGlobalMainSettings().getBoolean(KEY_SHOW_PROFILE_TAB, true);
+    }
+
+    public static void setProfileTabVisible(boolean visible) {
+        MessagesController.getGlobalMainSettings().edit().putBoolean(KEY_SHOW_PROFILE_TAB, visible).apply();
+    }
+
     public static int TABS_COUNT = 5;
     private static int POSITION_SETTINGS = 0;
     private static int POSITION_CHATS = 1;
@@ -343,8 +362,38 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
         blur3_updateColors();
         checkContactsTabBadge();
         checkUnreadCount(true);
+        updateTabVisibility(true);
 
         showAccountChangeHint();
+    }
+
+    private void updateTabVisibility(boolean animated) {
+        if (tabsView == null || tabs == null) {
+            return;
+        }
+        final boolean showContacts = isContactsTabVisible();
+        final boolean showProfile = isProfileTabVisible();
+        tabsView.setViewVisible(tabs[INDEX_CONTACTS], showContacts, animated);
+        tabsView.setViewVisible(tabs[INDEX_PROFILE], showProfile, animated);
+        tabsView.requestLayout();
+        if (viewPager != null) {
+            final int current = viewPager.getCurrentPosition();
+            if ((current == POSITION_CONTACTS && !showContacts) || (current == POSITION_PROFILE && !showProfile)) {
+                viewPager.scrollToPosition(POSITION_CHATS);
+                selectTab(POSITION_CHATS, animated);
+            }
+        }
+    }
+
+    @Override
+    protected boolean canScrollToPosition(int position) {
+        if (position == POSITION_CONTACTS) {
+            return isContactsTabVisible();
+        }
+        if (position == POSITION_PROFILE) {
+            return isProfileTabVisible();
+        }
+        return true;
     }
 
     private void checkContactsTabBadge() {
@@ -441,6 +490,7 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
             tabsView.setViewVisible(tabs[INDEX_SETTINGS_SLIDE],  false);
         }
         checkUi_callTabVisible(getUserConfig().showCallsTab, false);
+        updateTabVisibility(false);
 
         selectTab(viewPager.getCurrentPosition(), false);
 

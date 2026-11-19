@@ -89,6 +89,11 @@ public class MessageFilterRulesActivity extends BaseNekoSettingsActivity {
     }
 
     @Override
+    protected boolean useCardStyle() {
+        return true;
+    }
+
+    @Override
     protected String getActionBarTitle() {
         return "消息过滤规则";
     }

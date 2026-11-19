@@ -52,6 +52,10 @@ public abstract class ViewPagerActivity extends BaseFragment {
     }
 
 
+    protected boolean canScrollToPosition(int position) {
+        return true;
+    }
+
     protected FrameLayout createContentView(Context context) {
         return new FrameLayout(context);
     }
@@ -76,6 +80,11 @@ public abstract class ViewPagerActivity extends BaseFragment {
             @Override
             public View createView(int viewType) {
                 return new ViewPagerFragmentRootLayout(context);
+            }
+
+            @Override
+            public boolean canScrollTo(int position) {
+                return ViewPagerActivity.this.canScrollToPosition(position);
             }
 
             @Override
