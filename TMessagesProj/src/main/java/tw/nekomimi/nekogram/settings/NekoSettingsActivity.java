@@ -65,8 +65,6 @@ public class NekoSettingsActivity extends BaseNekoSettingsActivity {
     private int chatRow;
     private int passcodeRow;
     private int experimentRow;
-    private int messageFilterRow;
-    private int filterRulesRow;
     private int debugRow;
     private int categories2Row;
 
@@ -117,10 +115,6 @@ public class NekoSettingsActivity extends BaseNekoSettingsActivity {
             presentFragment(new NekoPasscodeSettingsActivity());
         } else if (position == experimentRow) {
             presentFragment(new NekoExperimentalSettingsActivity());
-        } else if (position == messageFilterRow) {
-            xyz.nextalone.nagram.ui.MessageFilter.showDialog(this);
-        } else if (position == filterRulesRow) {
-            presentFragment(new xyz.nextalone.nagram.ui.MessageFilterRulesActivity());
         } else if (position == debugRow) {
             presentFragment(new NekoDebugSettingsActivity());
         } else if (position == channelRow) {
@@ -162,7 +156,8 @@ public class NekoSettingsActivity extends BaseNekoSettingsActivity {
 
     @Override
     protected boolean useCardStyle() {
-        return true;
+        // 回退：恢复系统分组样式，不再使用卡片/折叠布局
+        return false;
     }
 
     @Override
@@ -189,8 +184,6 @@ public class NekoSettingsActivity extends BaseNekoSettingsActivity {
             passcodeRow = -1;
         }
         experimentRow = addRow("experiment");
-        messageFilterRow = addRow("messageFilter");
-        filterRulesRow = addRow("filterRules");
         debugRow = addRow("debug");
         categories2Row = addRow();
 
@@ -265,10 +258,6 @@ public class NekoSettingsActivity extends BaseNekoSettingsActivity {
                         textCell.setTextAndIcon(LocaleController.getString(R.string.PasscodeNeko), R.drawable.msg_secret, divider);
                     } else if (position == experimentRow) {
                         textCell.setTextAndIcon(LocaleController.getString(R.string.Experiment), R.drawable.msg_fave, divider);
-                    } else if (position == messageFilterRow) {
-                        textCell.setTextAndIcon("消息过滤器", R.drawable.msg_info, divider);
-                    } else if (position == filterRulesRow) {
-                        textCell.setTextAndIcon("消息过滤规则", R.drawable.msg_block, divider);
                     } else if (position == debugRow) {
                         textCell.setTextAndIcon(LocaleController.getString(R.string.DebugMenu), R.drawable.msg_info, divider);
                     }

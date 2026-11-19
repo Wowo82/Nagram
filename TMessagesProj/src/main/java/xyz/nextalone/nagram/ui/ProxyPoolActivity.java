@@ -1,12 +1,14 @@
 /*
  * 来源：Nagram（Wowo82/Nagram, main-yz）新增文件，本工程原创，无外部拷贝代码。
- * 用途：从 GitHub 公开代理列表拉取未打码的节点（含入库时间），支持勾选、TCP 延迟测试后批量加入代理列表。
+ * 用途：从 GitHub 公开代理列表拉取未打码的节点（含入库时间），支持直接点击添加、多选批量添加、
+ *      TCP 延迟测试，并可切换订阅加速地址。
  * 说明：网络请求与延迟测试都在后台线程执行，结果切回 UI 线程刷新；不依赖新增资源或字符串。
  */
 
 package xyz.nextalone.nagram.ui;
 
 import android.content.Context;
+import android.content.DialogInterface;
 import android.view.View;
 import android.view.ViewGroup;
 
@@ -14,17 +16,17 @@ import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.LocaleController;
+import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.R;
 import org.telegram.messenger.SharedConfig;
 import org.telegram.messenger.Utilities;
 import org.telegram.ui.ActionBar.ActionBar;
+import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.SimpleActionBar;
 import org.telegram.ui.ActionBar.SimpleActionBarMenu;
 import org.telegram.ui.ActionBar.Theme;
-import org.telegram.ui.Cells.CheckBoxCell;
-
-import xyz.nextalone.nagram.ui.ProxyNodeCell;
 import org.telegram.ui.Cells.HeaderCell;
 import org.telegram.ui.Cells.TextInfoPrivacyCell;
 import org.telegram.ui.Cells.TextSettingsCell;
@@ -54,7 +56,24 @@ import tw.nekomimi.nekogram.settings.BaseNekoSettingsActivity;
 
 public class ProxyPoolActivity extends BaseNekoSettingsActivity {
 
-    private static final String PROXY_URL = "https://raw.githubusercontent.com/watchttvv/free-proxy-list/main/proxy.txt";
+    private static final String RAW_PATH = "watchttvv/free-proxy-list/main/proxy.txt";
+    private static final String RAW_URL = "https://raw.githubusercontent.com/" + RAW_PATH;
+
+    /** 订阅地址候选，索引与 SOURCE_SHORT 一一对应。 */
+    private static final String[] SOURCE_NAMES = {
+            "直连（GitHub）",
+            "jsDelivr CDN",
+            "ghproxy 加速",
+            "ghfast 加速",
+    };
+    private static final String[] SOURCE_SHORT = {"直连", "jsDelivr", "ghproxy", "ghfast"};
+    private static final String[] SOURCE_URLS = {
+            RAW_URL,
+            "https://cdn.jsdelivr.net/gh/watchttvv/free-proxy-list@main/proxy.txt",
+            "https://ghproxy.net/" + RAW_URL,
+            "https://ghfast.top/" + RAW_URL,
+    };
+    private static final String PREF_SOURCE = "nagram_proxy_pool_source";
 
     // 整行按空白切分后的第一段，"scheme://host:port"
     private static final Pattern PROXY_PATTERN = Pattern.compile(
@@ -67,9 +86,8 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
     private static final Pattern REGION_PATTERN = Pattern.compile("\\[([^\\]]{1,8})]\\s*(.+)$");
 
     private static final int MENU_REFRESH = 1;
-    private static final int MENU_ADD_SELECTED = 2;
-    private static final int MENU_PING = 3;
-    private static final int MENU_SELECT_ALL = 4;
+    private static final int MENU_SOURCE = 2;
+    private static final int MENU_SELECT = 3;
 
     private static final int PING_NONE = -1;
     private static final int PING_FAILED = 0;
@@ -81,11 +99,13 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
     private int headerRow;
     private int statusRow;
     private int nodeStartRow;
+    private int addSelectedRow;
     private int infoRow;
 
     private boolean loading;
     private boolean error;
     private boolean loadedOnce;
+    private boolean selectionMode;
 
     @Override
     protected String getActionBarTitle() {
@@ -94,7 +114,8 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
 
     @Override
     protected boolean useCardStyle() {
-        return true;
+        // 回退：恢复系统分组样式，不再使用卡片/折叠布局
+        return false;
     }
 
     @Override
@@ -105,6 +126,7 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
         statusRow = rowCount++;
         nodeStartRow = rowCount;
         rowCount += nodes.size();
+        addSelectedRow = selectionMode ? rowCount++ : -1;
         infoRow = rowCount++;
     }
 
@@ -115,20 +137,19 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
         SimpleActionBarMenu menu = bar.createMenu();
         menu.clearItems();
         menu.addItem(MENU_REFRESH, R.drawable.msg_reset);
-        menu.addItem(MENU_PING, R.drawable.msg_speed);
-        menu.addItem(MENU_ADD_SELECTED, R.drawable.msg_add);
+        menu.addItem(MENU_SELECT, R.drawable.msg_add);
 
         bar.setActionBarMenuOnItemClick(new ActionBar.ActionBarMenuOnItemClick() {
             @Override
             public void onItemClick(int id) {
                 if (id == -1) {
                     finishFragment();
+                } else if (id == MENU_SOURCE) {
+                    showSourceDialog();
                 } else if (id == MENU_REFRESH) {
                     loadProxies();
-                } else if (id == MENU_PING) {
-                    pingAll();
-                } else if (id == MENU_ADD_SELECTED) {
-                    addSelected();
+                } else if (id == MENU_SELECT) {
+                    onSelectMenuClick();
                 }
             }
         });
@@ -160,10 +181,18 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
 
     @Override
     protected void onItemClick(View view, int position, float x, float y) {
+        if (position == headerRow) {
+            showSourceDialog();
+            return;
+        }
+        if (position == addSelectedRow) {
+            submitSelection();
+            return;
+        }
         if (position == statusRow) {
             if (error && !loading) {
                 loadProxies();
-            } else if (!loading) {
+            } else if (!loading && !selectionMode) {
                 pingAll();
             }
             return;
@@ -171,10 +200,17 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
         int index = position - nodeStartRow;
         if (index >= 0 && index < nodes.size()) {
             ProxyNode node = nodes.get(index);
-            node.selected = !node.selected;
-            if (listAdapter != null) {
-                listAdapter.notifyItemChanged(position);
-                listAdapter.notifyItemChanged(statusRow);
+            if (selectionMode) {
+                node.selected = !node.selected;
+                if (listAdapter != null) {
+                    listAdapter.notifyItemChanged(position);
+                    listAdapter.notifyItemChanged(statusRow);
+                    if (addSelectedRow >= 0) {
+                        listAdapter.notifyItemChanged(addSelectedRow);
+                    }
+                }
+            } else {
+                addNode(node);
             }
         }
     }
@@ -192,13 +228,17 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
             BulletinFactory.of(ProxyPoolActivity.this).createCopyLinkBulletin().show();
         });
         options.add(R.drawable.msg_speed, "测试此节点", () -> pingNode(node, index));
-        options.add(R.drawable.msg_add, node.selected ? "取消选择" : "选择此节点", () -> {
-            node.selected = !node.selected;
-            if (listAdapter != null) {
-                listAdapter.notifyItemChanged(position);
-                listAdapter.notifyItemChanged(statusRow);
-            }
-        });
+        if (selectionMode) {
+            options.add(R.drawable.msg_done, "全选 / 取消全选", () -> {
+                boolean selectAll = countSelected() < nodes.size();
+                for (int i = 0; i < nodes.size(); i++) {
+                    nodes.get(i).selected = selectAll;
+                }
+                refreshItemStates();
+            });
+        } else {
+            options.add(R.drawable.msg_add, "添加到代理列表", () -> addNode(node));
+        }
         options.show();
         return true;
     }
@@ -225,11 +265,42 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
         if (error) {
             return "获取失败，点击重试";
         }
-        String text = "共 " + nodes.size() + " 个节点，已选 " + countSelected() + " 个";
+        if (selectionMode) {
+            return "已选 " + countSelected() + " / " + nodes.size() + " 个，点右上角 + 完成";
+        }
+        String text = "共 " + nodes.size() + " 个节点 · 点击节点直接添加";
         if (pinging.get()) {
-            text += "，正在测速…";
+            text = "正在测速…  " + text;
         }
         return text;
+    }
+
+    private int getSourceIndex() {
+        return MessagesController.getGlobalMainSettings().getInt(PREF_SOURCE, 0);
+    }
+
+    private void setSourceIndex(int index) {
+        MessagesController.getGlobalMainSettings().edit().putInt(PREF_SOURCE, index).apply();
+    }
+
+    private void showSourceDialog() {
+        if (getParentActivity() == null) {
+            return;
+        }
+        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
+        builder.setTitle("订阅地址");
+        builder.setItems(SOURCE_NAMES, (DialogInterface dialog, int which) -> {
+            if (which == getSourceIndex()) {
+                return;
+            }
+            setSourceIndex(which);
+            if (listAdapter != null) {
+                listAdapter.notifyDataSetChanged();
+            }
+            loadProxies();
+        });
+        builder.setNegativeButton(LocaleController.getString(R.string.Cancel), null);
+        showDialog(builder.create());
     }
 
     private void refreshRows() {
@@ -239,18 +310,57 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
         }
     }
 
+    private void refreshItemStates() {
+        if (listAdapter != null) {
+            listAdapter.notifyDataSetChanged();
+        }
+    }
+
+    private void enterSelectionMode() {
+        selectionMode = true;
+        for (int i = 0; i < nodes.size(); i++) {
+            nodes.get(i).selected = false;
+        }
+        refreshRows();
+    }
+
+    private void exitSelectionMode() {
+        selectionMode = false;
+        for (int i = 0; i < nodes.size(); i++) {
+            nodes.get(i).selected = false;
+        }
+        refreshRows();
+    }
+
+    private void onSelectMenuClick() {
+        if (loading) {
+            return;
+        }
+        if (!selectionMode) {
+            enterSelectionMode();
+            return;
+        }
+        if (countSelected() == 0) {
+            exitSelectionMode();
+            return;
+        }
+        submitSelection();
+    }
+
     private void loadProxies() {
         if (loading) {
             return;
         }
         loading = true;
         error = false;
+        pinging.set(false);
         refreshRows();
 
+        final String url = SOURCE_URLS[Math.max(0, Math.min(SOURCE_URLS.length - 1, getSourceIndex()))];
         Utilities.globalQueue.postRunnable(() -> {
             ArrayList<ProxyNode> fetched = null;
             try {
-                fetched = fetchProxies();
+                fetched = fetchProxies(url);
             } catch (Throwable ignore) {
                 // 网络异常或解析异常统一按失败处理
             }
@@ -274,35 +384,59 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
         });
     }
 
-    private void addSelected() {
-        if (loading) {
+    /** 直接添加单个节点（普通模式下点击整行）。 */
+    private void addNode(ProxyNode node) {
+        if (node == null || node.settings == null) {
             return;
         }
+        SharedConfig.ProxyInfo info = new SharedConfig.ProxyInfo(node.settings);
+        SharedConfig.ProxyInfo result = SharedConfig.addProxy(info);
+        boolean existed = result != null && result != info;
+        SharedConfig.saveProxyList();
+        NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxySettingsChanged);
+
+        if (existed) {
+            BulletinFactory.of(this).createSimpleBulletin(R.raw.contact_check,
+                    "已在列表中：" + node.label()).show();
+        } else {
+            BulletinFactory.of(this).createSimpleBulletin(R.raw.contact_check,
+                    "已添加 " + node.label()).show();
+        }
+    }
+
+    /** 提交多选结果。 */
+    private void submitSelection() {
+        int selected = 0;
         int added = 0;
         for (int i = 0; i < nodes.size(); i++) {
             ProxyNode node = nodes.get(i);
             if (!node.selected || node.settings == null) {
                 continue;
             }
-            SharedConfig.addProxy(new SharedConfig.ProxyInfo(node.settings));
-            added++;
+            selected++;
+            SharedConfig.ProxyInfo info = new SharedConfig.ProxyInfo(node.settings);
+            SharedConfig.ProxyInfo result = SharedConfig.addProxy(info);
+            if (result == info) {
+                added++;
+            }
         }
 
-        if (added == 0) {
+        if (selected == 0) {
             BulletinFactory.of(this).createSimpleBulletin(R.raw.error, "请先选择要添加的代理").show();
             return;
         }
 
         SharedConfig.saveProxyList();
         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxySettingsChanged);
-        BulletinFactory.of(this).createSimpleBulletin(R.raw.contact_check, "已添加 " + added + " 个代理").show();
-
-        // 稍后再关闭页面，避免 Bulletin 随页面一起被移除
-        AndroidUtilities.runOnUIThread(() -> {
-            if (getParentActivity() != null) {
-                finishFragment();
-            }
-        }, 400);
+        if (added > 0) {
+            BulletinFactory.of(this).createSimpleBulletin(R.raw.contact_check,
+                    added == selected ? "已添加 " + added + " 个代理"
+                            : "已添加 " + added + " 个，跳过 " + (selected - added) + " 个已存在").show();
+        } else {
+            BulletinFactory.of(this).createSimpleBulletin(R.raw.contact_check,
+                    "所选节点均已在代理列表中").show();
+        }
+        exitSelectionMode();
     }
 
     /* 延迟测试 */
@@ -324,9 +458,10 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
         if (pingExecutor == null) {
             pingExecutor = Executors.newFixedThreadPool(8);
         }
-        for (int i = 0; i < nodes.size(); i++) {
+        final ArrayList<ProxyNode> snapshot = new ArrayList<>(nodes);
+        for (int i = 0; i < snapshot.size(); i++) {
             final int index = i;
-            final ProxyNode node = nodes.get(i);
+            final ProxyNode node = snapshot.get(i);
             pingExecutor.execute(() -> {
                 final int result = tcpPing(node.address, node.port);
                 node.ping = result;
@@ -345,12 +480,13 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
             });
         }
 
-        // 全部测完后复位状态
+        // 全部测完后复位状态，最多等待 30 秒避免异常情况下一直显示"正在测速"
         Utilities.globalQueue.postRunnable(() -> {
-            while (true) {
+            final long deadline = System.currentTimeMillis() + 30_000L;
+            while (System.currentTimeMillis() < deadline) {
                 boolean done = true;
-                for (int i = 0; i < nodes.size(); i++) {
-                    if (nodes.get(i).ping == PING_NONE) {
+                for (int i = 0; i < snapshot.size(); i++) {
+                    if (snapshot.get(i).ping == PING_NONE) {
                         done = false;
                         break;
                     }
@@ -415,14 +551,14 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
 
     /* 列表数据 */
 
-    private static ArrayList<ProxyNode> fetchProxies() throws IOException {
+    private static ArrayList<ProxyNode> fetchProxies(String url) throws IOException {
         ArrayList<ProxyNode> result = new ArrayList<>();
         HashSet<String> seen = new HashSet<>();
 
         HttpURLConnection connection = null;
         BufferedReader reader = null;
         try {
-            connection = (HttpURLConnection) new URL(PROXY_URL).openConnection();
+            connection = (HttpURLConnection) new URL(url).openConnection();
             connection.setConnectTimeout(15000);
             connection.setReadTimeout(15000);
             connection.setInstanceFollowRedirects(true);
@@ -578,24 +714,6 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
             }
             return ping + "ms";
         }
-
-        String detailText() {
-            StringBuilder builder = new StringBuilder();
-            if (!time.isEmpty()) {
-                builder.append(time);
-            }
-            String pingText = pingText();
-            if (!pingText.isEmpty()) {
-                if (builder.length() > 0) {
-                    builder.append(" · ");
-                }
-                builder.append(pingText);
-            }
-            if (builder.length() == 0) {
-                builder.append(protocol());
-            }
-            return builder.toString();
-        }
     }
 
     private int pingColor(int ping) {
@@ -638,14 +756,20 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
                 case TYPE_HEADER: {
                     HeaderCell headerCell = (HeaderCell) holder.itemView;
                     if (position == headerRow) {
-                        headerCell.setText("代理池");
+                        headerCell.setText("节点 · " + SOURCE_SHORT[Math.max(0, Math.min(SOURCE_SHORT.length - 1, getSourceIndex()))] + "  ▾");
                     }
                     break;
                 }
                 case TYPE_SETTINGS: {
                     TextSettingsCell settingsCell = (TextSettingsCell) holder.itemView;
-                    if (position == statusRow) {
+                    if (position == addSelectedRow) {
+                        settingsCell.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText2));
+                        settingsCell.setText("添加所选（" + countSelected() + "）", divider);
+                    } else if (position == statusRow) {
+                        settingsCell.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
                         settingsCell.setText(getStatusText(), divider);
+                    } else {
+                        settingsCell.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
                     }
                     break;
                 }
@@ -653,7 +777,8 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
                     TextInfoPrivacyCell infoCell = (TextInfoPrivacyCell) holder.itemView;
                     if (position == infoRow) {
                         infoCell.setText("数据来源为 GitHub 公开代理列表（watchttvv/free-proxy-list），仅收录未打码的节点。"
-                                + "点击顶部图标可重新拉取或测试所有节点延迟，长按单个节点可复制、单独测速。");
+                                + "点击节点直接加入代理列表；点击右上角 + 进入多选；点击标题栏的「节点」一行可切换订阅加速地址；"
+                                + "点击状态行可测试全部节点延迟，长按单个节点可复制或单独测速。");
                     }
                     break;
                 }
@@ -663,7 +788,8 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
                         ProxyNode node = nodes.get(index);
                         final String time = node.time.isEmpty() ? node.protocol() : "入库 " + node.time;
                         ((ProxyNodeCell) holder.itemView).setNode(
-                                node.label(), time, node.pingText(), pingColor(node.ping), node.selected, divider);
+                                node.label(), time, node.pingText(), pingColor(node.ping),
+                                selectionMode, node.selected, divider);
                     }
                     break;
                 }
@@ -676,7 +802,7 @@ public class ProxyPoolActivity extends BaseNekoSettingsActivity {
         public int getItemViewType(int position) {
             if (position == headerRow) {
                 return TYPE_HEADER;
-            } else if (position == statusRow) {
+            } else if (position == statusRow || position == addSelectedRow) {
                 return TYPE_SETTINGS;
             } else if (position == infoRow) {
                 return TYPE_INFO_PRIVACY;

@@ -920,7 +920,8 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
 
     @Override
     protected boolean useCardStyle() {
-        return true;
+        // 回退：恢复系统分组样式，不再使用卡片/折叠布局
+        return false;
     }
 
     @Override
