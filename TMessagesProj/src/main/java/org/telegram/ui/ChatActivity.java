@@ -490,6 +490,8 @@ public class ChatActivity extends BaseFragment implements
     public final static int nkbtn_setReminder = 2029;
     public final static int nkbtn_sticker_copy = 2031;
     public final static int nkbtn_sticker_copy_png = 2032;
+    /** 长按菜单「屏蔽」：与消息过滤器联动。 */
+    public final static int nkbtn_block = 2036;
 
 
     public int shareAlertDebugMode = DEBUG_SHARE_ALERT_MODE_NORMAL;
@@ -47143,6 +47145,10 @@ public class ChatActivity extends BaseFragment implements
                 nkbtn_translate(selectedObject, selectedObjectGroup);
                 break;
             }
+            case nkbtn_block: {
+                xyz.nextalone.nagram.ui.MessageBlocker.showDialog(this, selectedObject);
+                break;
+            }
             case nkbtn_detail: {
                 presentFragment(new MessageDetailsActivity(selectedObject));
                 break;
@@ -49676,6 +49682,11 @@ public class ChatActivity extends BaseFragment implements
                             options.add(nkbtn_translate);
                             icons.add(R.drawable.msg_translate);
                         }
+                    }
+                    if (messageObject != null || docsWithMessages) {
+                        items.add("屏蔽");
+                        options.add(nkbtn_block);
+                        icons.add(R.drawable.msg_block2);
                     }
                     if (NekoConfig.showShareMessages.Bool()) {
                         if (messageObject != null || docsWithMessages) {

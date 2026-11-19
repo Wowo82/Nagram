@@ -45,12 +45,72 @@ object EnvUtil {
 
         }.map { it.path }.toTypedArray()
 
+    /**
+     * 公共存储里不允许作为缓存根目录的名字。
+     *
+     * 历史版本/迁移数据可能把 cachePath 设成 Documents、Download 之类的公共目录，
+     * 结果缩略图、m3u8 播放列表、视频分片会散落在用户的文件管理器里。
+     * 这里做一次兜底：命中即强制回到应用专属的外部目录。
+     */
+    private val blockedCacheRoots = arrayOf(
+        "Documents", "Download", "Downloads", "Pictures", "DCIM", "Music", "Movies", "Telegram", "Nagram"
+    )
+
+    private fun isPublicCacheRoot(dir: File): Boolean {
+        val path = dir.absolutePath.trimEnd('/')
+        if (path.isEmpty()) return false
+        // 已经是应用专属目录，放行
+        if (path.contains("/Android/data/") || path.contains("/Android/media/")) return false
+        for (root in rootDirectories) {
+            val rootPath = root.absolutePath.trimEnd('/')
+            if (path == rootPath) return true
+            for (name in blockedCacheRoots) {
+                if (path == "$rootPath/$name" || path.startsWith("$rootPath/$name/")) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /** Telegram 缓存文件名：dcId_documentId[.ext] */
+    private val legacyCacheName = Regex("^\\d+_\\d+(\\.[A-Za-z0-9]+)?$")
+
+    /**
+     * 清理旧版本落在公共目录里的缓存文件。
+     *
+     * 只删除严格符合 Telegram 缓存命名（dcId_documentId）以及 m3u8 / ts / part 后缀的文件，
+     * 不会碰用户自己的文档。
+     */
+    private fun cleanupLegacyCache(dir: File) {
+        try {
+            val files = dir.listFiles() ?: return
+            for (file in files) {
+                if (file == null || file.isDirectory) continue
+                val name = file.name
+                if (legacyCacheName.matches(name) || name.endsWith(".m3u8")
+                    || name.endsWith(".ts") || name.endsWith(".part")
+                ) {
+                    try {
+                        file.delete()
+                    } catch (_: Throwable) {
+                    }
+                }
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
     // This is the only media path of NekoX, don't use other!
     @JvmStatic
     fun getTelegramPath(): File {
 
         if (NekoConfig.cachePath.String() == "") {
             // https://github.com/NekoX-Dev/NekoX/issues/284
+            NekoConfig.cachePath.setConfigString(availableDirectories[2])
+        } else if (isPublicCacheRoot(File(NekoConfig.cachePath.String()))) {
+            // 缓存不能落到公共目录，清掉遗留缓存并切回应用专属目录
+            cleanupLegacyCache(File(NekoConfig.cachePath.String()))
             NekoConfig.cachePath.setConfigString(availableDirectories[2])
         }
         var telegramPath = File(NekoConfig.cachePath.String())
