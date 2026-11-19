@@ -23894,7 +23894,16 @@ public class ChatActivity extends BaseFragment implements
                 if (!scheduled) {
                     invalidatePaidMessagesPriceOnIncoming(arr);
                 }
-                processNewMessages(arr);
+                // 新到达的消息同样走过滤，命中规则的直接丢弃
+                for (int a = arr.size() - 1; a >= 0; a--) {
+                    MessageObject incoming = arr.get(a);
+                    if (incoming != null && incoming.getId() != 0 && xyz.nextalone.nagram.ui.MessageFilterRules.shouldHide(incoming)) {
+                        arr.remove(a);
+                    }
+                }
+                if (!arr.isEmpty()) {
+                    processNewMessages(arr);
+                }
             } else if (ChatObject.isChannel(currentChat) && !currentChat.megagroup && chatInfo != null && did == -chatInfo.linked_chat_id) {
                 for (int a = 0, N = arr.size(); a < N; a++) {
                     MessageObject messageObject = arr.get(a);
