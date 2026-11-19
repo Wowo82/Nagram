@@ -57,10 +57,8 @@ public final class MessageBlocker {
         }
         final Theme.ResourcesProvider resourcesProvider = fragment.getResourceProvider();
         final long senderId = getSenderId(msg);
-        String keyword = normalizeKeyword(selectedText);
-        if (TextUtils.isEmpty(keyword)) {
-            keyword = buildKeyword(msg);
-        }
+        // 供匿名内部类引用，必须是 final
+        final String keyword = pickKeyword(msg, selectedText);
 
         final CharSequence[] items;
         final int[] actions; // 0 = 发送者，1 = 文字，2 = 编辑过滤器
@@ -148,6 +146,15 @@ public final class MessageBlocker {
         }
         MessageFilter.setRaw(TextUtils.isEmpty(old) ? quoted : old + "|" + quoted);
         Toast.makeText(context, "已加入消息过滤器：" + keyword + "，已立即生效", Toast.LENGTH_SHORT).show();
+    }
+
+    /** 优先用选中文字，没有选区时退回整条消息的正文。 */
+    private static String pickKeyword(MessageObject msg, CharSequence selectedText) {
+        String keyword = normalizeKeyword(selectedText);
+        if (TextUtils.isEmpty(keyword)) {
+            keyword = buildKeyword(msg);
+        }
+        return keyword;
     }
 
     /**
