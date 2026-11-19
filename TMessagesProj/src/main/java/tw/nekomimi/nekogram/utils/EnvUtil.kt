@@ -101,9 +101,31 @@ object EnvUtil {
         }
     }
 
+    @Volatile
+    private var publicLeftoversCleaned = false
+
+    /** 后台清理公共 Documents 里旧版本留下的缓存碎片。 */
+    private fun cleanupPublicLeftoversAsync() {
+        if (publicLeftoversCleaned) return
+        publicLeftoversCleaned = true
+        Thread {
+            try {
+                val docs = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+                cleanupLegacyCache(docs)
+                val nagramDir = File(docs, "Nagram")
+                if (nagramDir.isDirectory) {
+                    cleanupLegacyCache(nagramDir)
+                }
+            } catch (_: Throwable) {
+            }
+        }.start()
+    }
+
     // This is the only media path of NekoX, don't use other!
     @JvmStatic
     fun getTelegramPath(): File {
+
+        cleanupPublicLeftoversAsync()
 
         if (NekoConfig.cachePath.String() == "") {
             // https://github.com/NekoX-Dev/NekoX/issues/284
