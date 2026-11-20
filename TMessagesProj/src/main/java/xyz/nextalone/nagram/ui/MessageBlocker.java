@@ -18,7 +18,6 @@ import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
 
 import java.util.List;
-import java.util.regex.Pattern;
 
 /**
  * 长按消息菜单中的「屏蔽」。
@@ -40,6 +39,24 @@ public final class MessageBlocker {
     /** 弹出屏蔽方式选择框（整个消息）。 */
     public static void showDialog(BaseFragment fragment, MessageObject msg) {
         showDialog(fragment, msg, null);
+    }
+
+    /**
+     * 工具条「屏蔽」的一键入口：把选中文字（没有选区时用整条消息正文）直接写入消息过滤器。
+     *
+     * <p>不再弹出「屏蔽发送者 / 屏蔽文字 / 编辑过滤器」选择框，点一下即生效。</p>
+     *
+     * @return true 表示关键词已写入或本来就存在
+     */
+    public static boolean blockText(BaseFragment fragment, MessageObject msg, CharSequence selectedText) {
+        if (fragment == null || msg == null) {
+            return false;
+        }
+        final Context context = fragment.getParentActivity();
+        if (context == null) {
+            return false;
+        }
+        return blockKeyword(context, pickKeyword(msg, selectedText));
     }
 
     /**
@@ -132,20 +149,27 @@ public final class MessageBlocker {
         Toast.makeText(context, "已屏蔽发送者" + (TextUtils.isEmpty(name) ? "" : "：" + name) + "，已立即生效", Toast.LENGTH_SHORT).show();
     }
 
-    /** 把关键词追加到消息过滤器的全局正则。 */
-    private static void blockKeyword(Context context, String keyword) {
+    /**
+     * 把关键词追加到消息过滤器的全局正则。
+     *
+     * <p>只转义正则元字符，存成「关键词1|关键词2」这种可读形式，不再使用 {@code \Q...\E}。</p>
+     *
+     * @return true 表示已写入或关键词已存在
+     */
+    private static boolean blockKeyword(Context context, String keyword) {
         if (TextUtils.isEmpty(keyword)) {
             Toast.makeText(context, "这条消息没有可匹配的文字", Toast.LENGTH_SHORT).show();
-            return;
+            return false;
         }
-        final String quoted = Pattern.quote(keyword);
-        final String old = MessageFilter.getRaw();
-        if (!TextUtils.isEmpty(old) && (old.contains(quoted) || old.contains(keyword))) {
+        final String old = MessageFilter.normalizeRaw(MessageFilter.getRaw());
+        if (MessageFilter.containsKeyword(old, keyword)) {
             Toast.makeText(context, "关键词已在消息过滤器中", Toast.LENGTH_SHORT).show();
-            return;
+            return true;
         }
+        final String quoted = MessageFilter.escapeKeyword(keyword);
         MessageFilter.setRaw(TextUtils.isEmpty(old) ? quoted : old + "|" + quoted);
         Toast.makeText(context, "已加入消息过滤器：" + keyword + "，已立即生效", Toast.LENGTH_SHORT).show();
+        return true;
     }
 
     /** 优先用选中文字，没有选区时退回整条消息的正文。 */
@@ -194,31 +218,25 @@ public final class MessageBlocker {
         return s;
     }
 
+    /**
+     * 与过滤引擎使用同一个 ID：直接取 {@link MessageObject#getSenderId()}，
+     * 避免转发消息写入的 ID 和匹配时的 ID 不一致。
+     */
     private static long getSenderId(MessageObject msg) {
-        if (msg == null || msg.messageOwner == null || msg.messageOwner.from_id == null) {
+        if (msg == null || msg.messageOwner == null) {
             return 0;
         }
-        TLRPC.Peer peer = msg.messageOwner.from_id;
-        if (peer.user_id != 0) {
-            return peer.user_id;
-        }
-        if (peer.channel_id != 0) {
-            return -peer.channel_id;
-        }
-        if (peer.chat_id != 0) {
-            return -peer.chat_id;
-        }
-        return 0;
+        return msg.getSenderId();
     }
 
     private static String getSenderName(MessageObject msg) {
-        if (msg == null || msg.messageOwner == null || msg.messageOwner.from_id == null) {
+        final long senderId = getSenderId(msg);
+        if (senderId == 0) {
             return "";
         }
-        final TLRPC.Peer peer = msg.messageOwner.from_id;
         final MessagesController controller = MessagesController.getInstance(msg.currentAccount);
-        if (peer.user_id != 0) {
-            TLRPC.User user = controller.getUser(peer.user_id);
+        if (senderId > 0) {
+            TLRPC.User user = controller.getUser(senderId);
             if (user != null) {
                 String name = ContactsController.formatName(user.first_name, user.last_name);
                 if (!TextUtils.isEmpty(name)) {
@@ -228,20 +246,12 @@ public final class MessageBlocker {
                     return "@" + user.username;
                 }
             }
-            return String.valueOf(peer.user_id);
+            return String.valueOf(senderId);
         }
-        if (peer.channel_id != 0) {
-            TLRPC.Chat chat = controller.getChat(peer.channel_id);
-            if (chat != null && !TextUtils.isEmpty(chat.title)) {
-                return chat.title;
-            }
+        TLRPC.Chat chat = controller.getChat(-senderId);
+        if (chat != null && !TextUtils.isEmpty(chat.title)) {
+            return chat.title;
         }
-        if (peer.chat_id != 0) {
-            TLRPC.Chat chat = controller.getChat(peer.chat_id);
-            if (chat != null && !TextUtils.isEmpty(chat.title)) {
-                return chat.title;
-            }
-        }
-        return "";
+        return String.valueOf(senderId);
     }
 }

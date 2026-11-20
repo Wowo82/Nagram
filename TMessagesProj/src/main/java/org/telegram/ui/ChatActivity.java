@@ -3833,7 +3833,8 @@ public class ChatActivity extends BaseFragment implements
             if (chatActivity == null || messageObject == null) {
                 return;
             }
-            xyz.nextalone.nagram.ui.MessageBlocker.showDialog(chatActivity, messageObject, text);
+            // 工具条「屏蔽」一键生效：选中文字直接写入消息过滤器，不再弹二次选择框
+            xyz.nextalone.nagram.ui.MessageBlocker.blockText(chatActivity, messageObject, text);
         }
 
         @Override
@@ -28261,13 +28262,14 @@ public class ChatActivity extends BaseFragment implements
             return;
         }
         final ArrayList<Integer> ids = new ArrayList<>();
+        final HashSet<Integer> idSet = new HashSet<>();
         for (int a = 0, N = messages.size(); a < N; a++) {
             MessageObject object = messages.get(a);
             if (object == null || object.getId() == 0 || object.isDateObject) {
                 continue;
             }
             object.reapplyFilterAction();
-            if (object.isFilterHidden()) {
+            if (object.isFilterHidden() && idSet.add(object.getId())) {
                 ids.add(object.getId());
             }
         }
@@ -28292,6 +28294,14 @@ public class ChatActivity extends BaseFragment implements
                     MessageObject item = group.messages.get(j);
                     if (item != null) {
                         item.applyGroupFilterAction(maxAction);
+                    }
+                }
+                // 整组传播后再收集一次：组里只有一条命中（比如 caption 命中）时，
+                // 同组的图片 / 视频也要一起从列表移除，否则会留下半条广告。
+                for (int j = 0, M = group.messages.size(); j < M; j++) {
+                    MessageObject item = group.messages.get(j);
+                    if (item != null && item.getId() != 0 && item.isFilterHidden() && idSet.add(item.getId())) {
+                        ids.add(item.getId());
                     }
                 }
             }

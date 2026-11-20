@@ -50,19 +50,123 @@ public class MessageFilter {
         return MessagesController.getGlobalMainSettings().getString(KEY, "");
     }
 
-    /** 写入正则文本；空串表示关闭过滤器。 */
+    /** 写入正则文本；空串表示关闭过滤器。存储前统一规范化，保证是「关键词1|关键词2」形式。 */
     public static void setRaw(String value) {
-        String normalized = value == null ? "" : value.trim();
-        while (normalized.startsWith("|")) {
-            normalized = normalized.substring(1);
-        }
-        while (normalized.endsWith("|")) {
-            normalized = normalized.substring(0, normalized.length() - 1);
-        }
+        final String normalized = normalizeRaw(value);
         MessagesController.getGlobalMainSettings().edit().putString(KEY, normalized).apply();
         cachedPattern = null;
         cachedRaw = null;
         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.messageFilterRulesChanged);
+    }
+
+    /** 转义正则元字符，但保持关键词本身可读（不使用 \Q...\E 包裹）。 */
+    public static String escapeKeyword(String keyword) {
+        if (TextUtils.isEmpty(keyword)) {
+            return "";
+        }
+        final String meta = "\\.^$*+?()[]{}|";
+        final StringBuilder sb = new StringBuilder(keyword.length() + 8);
+        for (int i = 0; i < keyword.length(); i++) {
+            final char c = keyword.charAt(i);
+            if (meta.indexOf(c) >= 0) {
+                sb.append('\\');
+            }
+            sb.append(c);
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 规范化过滤器内容。
+     *
+     * <p>1. 把历史写入的 {@code \Q...\E} 片段展开成普通文本（内部元字符转义）；<br>
+     * 2. 丢弃空分支和多余的 {@code |}，只保留用单个竖线连接的有效关键词。</p>
+     */
+    public static String normalizeRaw(String raw) {
+        if (TextUtils.isEmpty(raw)) {
+            return "";
+        }
+        String s = raw;
+        if (s.contains("\\Q")) {
+            final StringBuilder out = new StringBuilder(s.length());
+            int i = 0;
+            while (i < s.length()) {
+                final int q = s.indexOf("\\Q", i);
+                if (q < 0) {
+                    out.append(s, i, s.length());
+                    break;
+                }
+                out.append(s, i, q);
+                final int e = s.indexOf("\\E", q + 2);
+                if (e < 0) {
+                    out.append(s, q, s.length());
+                    break;
+                }
+                out.append(escapeKeyword(s.substring(q + 2, e)));
+                i = e + 2;
+            }
+            s = out.toString();
+        }
+        final StringBuilder out = new StringBuilder(s.length());
+        final StringBuilder current = new StringBuilder();
+        boolean escaped = false;
+        for (int i = 0; i < s.length(); i++) {
+            final char c = s.charAt(i);
+            if (escaped) {
+                current.append(c);
+                escaped = false;
+            } else if (c == '\\') {
+                current.append(c);
+                escaped = true;
+            } else if (c == '|') {
+                appendAlternative(out, current);
+            } else {
+                current.append(c);
+            }
+        }
+        appendAlternative(out, current);
+        return out.toString();
+    }
+
+    private static void appendAlternative(StringBuilder out, StringBuilder current) {
+        // 只丢弃纯空分支（首尾 / 连续 |），其余内容原样保留，避免改动正则里的空格
+        final String part = current.toString();
+        current.setLength(0);
+        if (part.trim().isEmpty()) {
+            return;
+        }
+        if (out.length() > 0) {
+            out.append('|');
+        }
+        out.append(part);
+    }
+
+    /** 规范化后的过滤器里是否已经包含这个关键词（按 | 精确比较，忽略转义差异）。 */
+    public static boolean containsKeyword(String normalizedRaw, String keyword) {
+        if (TextUtils.isEmpty(normalizedRaw) || TextUtils.isEmpty(keyword)) {
+            return false;
+        }
+        final String quoted = escapeKeyword(keyword);
+        final StringBuilder current = new StringBuilder();
+        boolean escaped = false;
+        for (int i = 0; i <= normalizedRaw.length(); i++) {
+            final char c = i < normalizedRaw.length() ? normalizedRaw.charAt(i) : '|';
+            if (escaped) {
+                current.append(c);
+                escaped = false;
+            } else if (c == '\\') {
+                current.append(c);
+                escaped = true;
+            } else if (c == '|') {
+                if (current.toString().trim().equals(quoted)) {
+                    return true;
+                }
+                current.setLength(0);
+            } else {
+                current.append(c);
+            }
+        }
+        return false;
     }
 
     /** 编译后的正则；未配置或语法错误时返回 null。 */
@@ -128,7 +232,7 @@ public class MessageFilter {
         editText.setCursorWidth(1.5f);
         editText.setSingleLine(true);
         editText.setPadding(0, AndroidUtilities.dp(6), 0, AndroidUtilities.dp(6));
-        editText.setText(getRaw());
+        editText.setText(normalizeRaw(getRaw()));
 
         final TextView desc = new TextView(context);
         desc.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
