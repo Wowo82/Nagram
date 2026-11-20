@@ -22977,7 +22977,7 @@ public class ChatActivity extends BaseFragment implements
             if (obj.type < 0 || loadIndex == 1 && action instanceof TLRPC.TL_messageActionChatMigrateTo) {
                 continue;
             }
-            if (xyz.nextalone.nagram.ui.MessageFilterRules.shouldHide(obj)) {
+            if (obj.isFilterHidden()) {
                 continue;
             }
 
@@ -23905,7 +23905,7 @@ public class ChatActivity extends BaseFragment implements
                 // 新到达的消息同样走过滤，命中规则的直接丢弃
                 for (int a = arr.size() - 1; a >= 0; a--) {
                     MessageObject incoming = arr.get(a);
-                    if (incoming != null && incoming.getId() != 0 && xyz.nextalone.nagram.ui.MessageFilterRules.shouldHide(incoming)) {
+                    if (incoming != null && incoming.getId() != 0 && incoming.isFilterHidden()) {
                         arr.remove(a);
                     }
                 }
@@ -28250,10 +28250,11 @@ public class ChatActivity extends BaseFragment implements
     }
 
     /**
-     * 过滤规则变化后，把当前会话里已经加载、现在命中规则的消息移除。
+     * 过滤规则变化后重算当前会话已加载的消息。
      *
-     * 走 {@link #processDeletedMessages} 这条纯 UI 路径（删除行、重建分组、刷新列表），
-     * 不删除服务器消息，也不写数据库。
+     * <p>对齐上游：先让每条消息 reapply（折叠占位 / 遮罩 entity 就地增删），
+     * 再按分组（相册）把最高动作传播给整组，最后把 HIDE 的消息从列表里移除。
+     * 只做 UI 层处理，不删服务器消息、不写数据库。</p>
      */
     private void applyMessageFiltersToLoadedMessages() {
         if (messages == null || messages.isEmpty() || isInScheduleMode()) {
@@ -28265,18 +28266,45 @@ public class ChatActivity extends BaseFragment implements
             if (object == null || object.getId() == 0 || object.isDateObject) {
                 continue;
             }
-            if (xyz.nextalone.nagram.ui.MessageFilterRules.shouldHide(object)) {
+            object.reapplyFilterAction();
+            if (object.isFilterHidden()) {
                 ids.add(object.getId());
             }
         }
-        if (ids.isEmpty()) {
-            return;
+        // 相册：说明文字只挂在其中一条上，整组取最强动作
+        if (groupedMessagesMap != null) {
+            for (int i = 0, N = groupedMessagesMap.size(); i < N; i++) {
+                MessageObject.GroupedMessages group = groupedMessagesMap.valueAt(i);
+                if (group == null || group.messages == null || group.messages.isEmpty()) {
+                    continue;
+                }
+                int maxAction = xyz.nextalone.nagram.ui.MessageFilterRules.ACTION_NONE;
+                for (int j = 0, M = group.messages.size(); j < M; j++) {
+                    MessageObject item = group.messages.get(j);
+                    if (item != null && item.getFilterAction() > maxAction) {
+                        maxAction = item.getFilterAction();
+                    }
+                }
+                if (maxAction == xyz.nextalone.nagram.ui.MessageFilterRules.ACTION_NONE) {
+                    continue;
+                }
+                for (int j = 0, M = group.messages.size(); j < M; j++) {
+                    MessageObject item = group.messages.get(j);
+                    if (item != null) {
+                        item.applyGroupFilterAction(maxAction);
+                    }
+                }
+            }
         }
-        long channelId = 0;
-        if (currentChat != null && ChatObject.isChannel(currentChat)) {
-            channelId = -dialog_id;
+        if (!ids.isEmpty()) {
+            long channelId = 0;
+            if (currentChat != null && ChatObject.isChannel(currentChat)) {
+                channelId = -dialog_id;
+            }
+            processDeletedMessages(ids, channelId, false);
+        } else if (chatAdapter != null) {
+            chatAdapter.notifyDataSetChanged();
         }
-        processDeletedMessages(ids, channelId, false);
     }
 
     private void processDeletedMessages(ArrayList<Integer> markAsDeletedMessages, long channelId, boolean sent) {

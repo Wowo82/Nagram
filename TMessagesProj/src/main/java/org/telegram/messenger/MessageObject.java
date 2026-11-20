@@ -58,6 +58,9 @@ import xyz.nextalone.nagram.ui.syntaxhighlight.SyntaxHighlight;
 import org.telegram.PhoneFormat.PhoneFormat;
 import org.telegram.messenger.browser.Browser;
 import org.telegram.messenger.ringtone.RingtoneDataStore;
+
+import xyz.nextalone.nagram.ui.MessageFilter;
+import xyz.nextalone.nagram.ui.MessageFilterRules;
 import org.telegram.messenger.utils.tlutils.AmountUtils;
 import org.telegram.messenger.utils.tlutils.TLKeyboardHelper;
 import org.telegram.messenger.utils.tlutils.TlUtils;
@@ -279,6 +282,14 @@ public class MessageObject {
     public boolean forceShowPollResults;
 
     public boolean isSpoilersRevealed = NekoConfig.showSpoilersDirectly.Bool();
+    /** 消息过滤动作，-1 表示未计算。见 MessageFilterRules.ACTION_*。 */
+    public int filterAction = -1;
+    /** 规则命中「遮罩」时注入的 spoiler entity，用于撤销。 */
+    public TLRPC.MessageEntity filterSpoilerEntity;
+    /** 折叠占位是否已应用，保证重算幂等。 */
+    public boolean filterCollapsedApplied;
+    /** 折叠占位文案，与上游 filterActionCollapsePlaceholder 一致。 */
+    private static final String FILTER_COLLAPSE_PLACEHOLDER = "💬 消息已被过滤规则折叠";
     public boolean isMediaSpoilersRevealed;
     public boolean isMediaSpoilersRevealedInSharedMedia;
     public boolean revealingMediaSpoilers;
@@ -2114,6 +2125,27 @@ public class MessageObject {
         }
 
         updateMessageText(users, chats, sUsers, sChats);
+        // 消息过滤器 / 过滤规则：在 setType 前应用「遮罩」「折叠」，隐藏由渲染层跳过
+        filterAction = -1;
+        final int __filterAct = getFilterAction();
+        if (__filterAct == MessageFilterRules.ACTION_SPOILER
+                && filterSpoilerEntity == null && !isRestrictedMessage) {
+            final int len = messageOwner.message != null ? messageOwner.message.length() : 0;
+            if (len > 0 && messageOwner.entities != null) {
+                TLRPC.TL_messageEntitySpoiler spoiler = new TLRPC.TL_messageEntitySpoiler();
+                spoiler.offset = 0;
+                spoiler.length = len;
+                messageOwner.entities.add(spoiler);
+                filterSpoilerEntity = spoiler;
+            }
+            isSpoilersRevealed = false;
+            isMediaSpoilersRevealed = false;
+        }
+        if (__filterAct == MessageFilterRules.ACTION_COLLAPSE && !isRestrictedMessage) {
+            messageText = FILTER_COLLAPSE_PLACEHOLDER;
+            isRestrictedMessage = true;
+            filterCollapsedApplied = true;
+        }
         setType();
         if (generateLayout) {
             updateTranslation(false);
@@ -2131,6 +2163,9 @@ public class MessageObject {
 
         createMessageSendInfo();
         generateCaption();
+        if (filterCollapsedApplied) {
+            caption = null;
+        }
         if (generateLayout) {
             TextPaint paint;
             if (getMedia(messageOwner) instanceof TLRPC.TL_messageMediaGame) {
@@ -4859,6 +4894,107 @@ public class MessageObject {
             chat = MessagesController.getInstance(currentAccount).getChat(chatId);
         }
         return chat;
+    }
+
+    /** 是否应被消息过滤器 / 过滤规则完全隐藏。 */
+    public boolean isFilterHidden() {
+        return getFilterAction() == MessageFilterRules.ACTION_HIDE;
+    }
+
+    /**
+     * 返回此消息应执行的过滤动作（见 {@link MessageFilterRules}）。
+     * 首次调用计算并缓存；规则变化后由 {@link #reapplyFilterAction()} 重置。
+     */
+    public int getFilterAction() {
+        if (filterAction != -1) {
+            return filterAction;
+        }
+        int result = MessageFilterRules.ACTION_NONE;
+        // 折叠态下 messageText 是占位串、caption 已清空，必须用原文匹配
+        CharSequence filterMessageText = filterCollapsedApplied ? messageOwner.message : messageText;
+        CharSequence filterText = caption;
+        if (filterText == null && messageText != null && !isMediaEmpty() && !filterCollapsedApplied) {
+            // 媒体消息的 caption 要等 generateCaption() 才生成；构造中途只能用原文兜底
+            filterText = messageOwner.message;
+        }
+        final Pattern filterPattern = MessageFilter.getPattern();
+        if (filterPattern != null
+                && ((filterMessageText != null && filterPattern.matcher(filterMessageText).find())
+                || (filterText != null && filterPattern.matcher(filterText).find()))) {
+            result = MessageFilterRules.ACTION_HIDE;
+        }
+        if (result != MessageFilterRules.ACTION_HIDE) {
+            final long viaBotId = messageOwner != null ? messageOwner.via_bot_id : 0L;
+            // 本仓库的 TLRPC.Message 没有 via_bot_name 字段，按 id 匹配即可
+            final String viaBotName = null;
+            final int fromRules = MessageFilterRules.match(filterMessageText, filterText, getSenderId(), viaBotId, viaBotName);
+            if (fromRules > result) {
+                result = fromRules;
+            }
+        }
+        filterAction = result;
+        return result;
+    }
+
+    /** 规则变化后重算并就地应用动作。 */
+    public void reapplyFilterAction() {
+        filterAction = -1;
+        applyFilterActionNow();
+    }
+
+    /**
+     * 相册组内传播：整组取最高动作。
+     *
+     * @return true 表示动作确实提高，调用方需要刷新界面
+     */
+    public boolean applyGroupFilterAction(int act) {
+        if (act == MessageFilterRules.ACTION_NONE || act <= getFilterAction()) {
+            return false;
+        }
+        filterAction = act;
+        applyFilterActionNow();
+        return true;
+    }
+
+    /** 把动作落到 messageText / entities 上，可重复调用。 */
+    private void applyFilterActionNow() {
+        final int act = getFilterAction();
+        if (act == MessageFilterRules.ACTION_SPOILER && filterSpoilerEntity == null && !isRestrictedMessage) {
+            final int len = messageOwner != null && messageOwner.message != null ? messageOwner.message.length() : 0;
+            if (len > 0 && messageOwner.entities != null) {
+                TLRPC.TL_messageEntitySpoiler spoiler = new TLRPC.TL_messageEntitySpoiler();
+                spoiler.offset = 0;
+                spoiler.length = len;
+                messageOwner.entities.add(spoiler);
+                filterSpoilerEntity = spoiler;
+            }
+            isSpoilersRevealed = false;
+            isMediaSpoilersRevealed = false;
+        } else if (act != MessageFilterRules.ACTION_SPOILER && filterSpoilerEntity != null) {
+            if (messageOwner != null && messageOwner.entities != null) {
+                messageOwner.entities.remove(filterSpoilerEntity);
+            }
+            filterSpoilerEntity = null;
+        }
+        if (act == MessageFilterRules.ACTION_COLLAPSE && !filterCollapsedApplied) {
+            messageText = FILTER_COLLAPSE_PLACEHOLDER;
+            caption = null;
+            isRestrictedMessage = true;
+            filterCollapsedApplied = true;
+            forceUpdate = true;
+        } else if (act != MessageFilterRules.ACTION_COLLAPSE && filterCollapsedApplied) {
+            filterCollapsedApplied = false;
+            isRestrictedMessage = false;
+            updateMessageText();
+            forceUpdate = true;
+        }
+        generateLayout(null);
+        setType();
+        caption = null;
+        generateCaption();
+        if (filterCollapsedApplied) {
+            caption = null;
+        }
     }
 
     public void updateMessageText() {

@@ -261,8 +261,9 @@ public class MessageFilterRulesActivity extends BaseNekoSettingsActivity {
 
         addDialogLabel(container, context, "执行动作");
         final RadioGroup actionGroup = new RadioGroup(context);
-        // 折叠 / 剧透暂未实现渲染，只保留「隐藏」避免误选后看起来不生效
-        addRadioButton(context, actionGroup, 2000 + MessageFilterRules.ACTION_HIDE, "隐藏消息", true);
+        addRadioButton(context, actionGroup, 2000 + MessageFilterRules.ACTION_HIDE, "隐藏消息", source == null || source.action == MessageFilterRules.ACTION_HIDE);
+        addRadioButton(context, actionGroup, 2000 + MessageFilterRules.ACTION_COLLAPSE, "折叠显示", source != null && source.action == MessageFilterRules.ACTION_COLLAPSE);
+        addRadioButton(context, actionGroup, 2000 + MessageFilterRules.ACTION_SPOILER, "剧透遮挡", source != null && source.action == MessageFilterRules.ACTION_SPOILER);
         container.addView(actionGroup);
 
         new AlertDialog.Builder(context)
@@ -408,7 +409,7 @@ public class MessageFilterRulesActivity extends BaseNekoSettingsActivity {
                 }
                 case TYPE_INFO_PRIVACY: {
                     TextInfoPrivacyCell cell = (TextInfoPrivacyCell) holder.itemView;
-                    cell.setText("规则按顺序匹配消息的正文和标题。当前版本仅「隐藏消息」动作会生效，命中的消息不会显示在聊天列表中；「折叠显示」「剧透遮挡」为预留动作。\n\n发送者 ID 为数字（用户、群组或频道 ID）。via Bot 留空或填写 * 表示任意通过 inline bot 发送的消息。");
+                    cell.setText("规则按从上到下顺序执行。消息命中多条规则时取最强动作：隐藏 > 折叠 > 遮罩。\n\n发送者 ID 为数字（用户、群组或频道 ID）。via Bot 填写 * 表示任意通过 inline bot 发送的消息。");
                     cell.setBackground(Theme.getThemedDrawable(mContext, R.drawable.greydivider_bottom, Theme.key_windowBackgroundGrayShadow));
                     break;
                 }

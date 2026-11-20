@@ -30,7 +30,10 @@ import java.util.regex.Pattern;
  */
 public final class MessageFilterRules {
 
-    private static final String PREF_KEY = "nagram_message_filter_rules";
+    /** 与上游 Nnngram 的 Config.filterRules 一致。 */
+    private static final String PREF_KEY = "filterRules";
+    /** 早期移植版本用过的键，读取时迁移一次。 */
+    private static final String LEGACY_PREF_KEY = "nagram_message_filter_rules";
 
     /** 动作：不处理。 */
     public static final int ACTION_NONE = 0;
@@ -126,6 +129,14 @@ public final class MessageFilterRules {
             SharedPreferences prefs = MessagesController.getGlobalMainSettings();
             String json = prefs.getString(PREF_KEY, "");
             if (TextUtils.isEmpty(json) || "[]".equals(json)) {
+                // 迁移旧版本存下的规则
+                String legacy = prefs.getString(LEGACY_PREF_KEY, "");
+                if (!TextUtils.isEmpty(legacy) && !"[]".equals(legacy)) {
+                    json = legacy;
+                    prefs.edit().putString(PREF_KEY, legacy).apply();
+                }
+            }
+            if (TextUtils.isEmpty(json) || "[]".equals(json)) {
                 return out;
             }
             JSONArray arr = new JSONArray(json);
@@ -180,8 +191,8 @@ public final class MessageFilterRules {
             List<Compiled> built = new ArrayList<>();
             for (Rule r : loadRules()) {
                 if (r == null || !r.enabled) continue;
-                // via bot 允许空值表示“任意”，其它类型空值无意义
-                if (TextUtils.isEmpty(r.matchValue) && r.matchType != MATCH_VIA_BOT) continue;
+                // 与上游一致：空匹配值直接跳过（via bot 的「任意」用 * 表示）
+                if (TextUtils.isEmpty(r.matchValue)) continue;
                 Pattern p = null;
                 if (r.matchType == MATCH_REGEX) {
                     try {
@@ -206,6 +217,14 @@ public final class MessageFilterRules {
      * @param viaBotId via bot 的 user id，0 表示无 / 未解析
      */
     public static int match(CharSequence text, CharSequence caption, long senderId, long viaBotId) {
+        return match(text, caption, senderId, viaBotId, null);
+    }
+
+    /**
+     * 上游签名：额外传入 via bot 的 username。
+     * 有些 via bot 消息只有 username、没有数值 id。
+     */
+    public static int match(CharSequence text, CharSequence caption, long senderId, long viaBotId, String viaBotName) {
         List<Compiled> rules = compiled();
         if (rules.isEmpty()) return ACTION_NONE;
         int best = ACTION_NONE;
@@ -232,7 +251,8 @@ public final class MessageFilterRules {
                     break;
                 }
                 case MATCH_VIA_BOT: {
-                    if (viaBotId == 0) {
+                    final boolean hasViaBot = viaBotId != 0 || !TextUtils.isEmpty(viaBotName);
+                    if (!hasViaBot) {
                         hit = false;
                     } else {
                         String raw = c.rule.matchValue == null ? "" : c.rule.matchValue.trim();
@@ -269,9 +289,7 @@ public final class MessageFilterRules {
             senderId = msg.getSenderId();
             viaBotId = msg.messageOwner.via_bot_id;
         }
-        // 目前折叠 / 剧透没有对应的渲染实现，命中即按隐藏处理，
-        // 避免用户选了「折叠显示」却看不到任何效果。
-        return match(msg.messageText, msg.caption, senderId, viaBotId) != ACTION_NONE;
+        return match(msg.messageText, msg.caption, senderId, viaBotId) == ACTION_HIDE;
     }
 
     private static boolean containsText(CharSequence src, String needle, boolean caseInsensitive) {
