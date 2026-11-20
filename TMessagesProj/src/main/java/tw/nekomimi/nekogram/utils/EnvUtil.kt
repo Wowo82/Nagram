@@ -12,6 +12,7 @@ import org.telegram.messenger.AndroidUtilities
 import org.telegram.messenger.ApplicationLoader
 import org.telegram.messenger.FileLoader
 import org.telegram.messenger.FileLog
+import org.telegram.messenger.UserConfig
 import tw.nekomimi.nekogram.NekoConfig
 import java.io.File
 import java.io.FileInputStream
@@ -328,6 +329,21 @@ object EnvUtil {
         }
     }
 
+    /**
+     * 排查用：问一下路径数据库里有没有指向公共目录的历史记录。只读。
+     *
+     * getPathToAttach 会优先返回这张表里的路径，一旦曾经记成 Documents/5_xxx，
+     * 后续每次都会照旧写回去，与当前 cachePath 无关。
+     */
+    private fun probeFilePathDatabase() {
+        try {
+            val account = UserConfig.selectedAccount
+            FileLoader.getInstance(account).fileDatabase.probePublicPaths()
+        } catch (t: Throwable) {
+            FileLog.d("PathDbProbe: failed $t")
+        }
+    }
+
     /** 后台清理公共 Documents 里旧版本留下的缓存碎片。 */
     private fun cleanupPublicLeftoversAsync() {
         if (publicLeftoversCleaned) return
@@ -349,6 +365,7 @@ object EnvUtil {
             // 等权限弹窗处理完、MediaProvider 就绪之后再问一次归属
             try {
                 AndroidUtilities.runOnUIThread({ probeDocumentsViaMediaStore() }, 12_000)
+                AndroidUtilities.runOnUIThread({ probeFilePathDatabase() }, 15_000)
             } catch (_: Throwable) {
             }
         }.start()
