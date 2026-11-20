@@ -155,12 +155,6 @@ public class NekoSettingsActivity extends BaseNekoSettingsActivity {
     }
 
     @Override
-    protected boolean useCardStyle() {
-        // 回退：恢复系统分组样式，不再使用卡片/折叠布局
-        return false;
-    }
-
-    @Override
     protected String getActionBarTitle() {
         return LocaleController.getString(R.string.N_Config);
     }

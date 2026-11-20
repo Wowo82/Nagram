@@ -379,9 +379,6 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
             ((DefaultItemAnimator) listView.getItemAnimator()).setSupportsChangeAnimations(false);
         }
         listView.setAdapter(listAdapter);
-        if (useCardStyle()) {
-            applyCardStyle();
-        }
         listView.setItemSelectorColorProvider(position ->
                 position == cellGroup.rows.indexOf(filterTabsPreviewRow) ? Color.TRANSPARENT : null);
 
@@ -453,8 +450,8 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
                     builder.setDelegate((i) -> {
                         NekoConfig.openPGPApp.setConfigString(appsMap.get(i));
                         NekoConfig.openPGPKeyId.setConfigLong(0L);
-                        cellGroup.notifyItemChangedSafe(listAdapter, pgpAppRow);
-                        cellGroup.notifyItemChangedSafe(listAdapter, keyRow);
+                        listAdapter.notifyItemChanged(cellGroup.rows.indexOf(pgpAppRow));
+                        listAdapter.notifyItemChanged(cellGroup.rows.indexOf(keyRow));
 
                         if (i > 0) PGPUtil.recreateConnection();
                     });
@@ -611,23 +608,19 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
             } else if (NekoConfig.useOSMDroidMap.getKey().equals(key)) {
                 boolean enabled = (Boolean) newValue;
                 ((ConfigCellTextCheck) mapDriftingFixForGoogleMapsRow).setEnabled(!enabled);
-                cellGroup.notifyItemChangedSafe(listAdapter, mapDriftingFixForGoogleMapsRow);
+                listAdapter.notifyItemChanged(cellGroup.rows.indexOf(mapDriftingFixForGoogleMapsRow));
             } else if (key.equals(NekoConfig.useTelegramTranslateInChat.getKey())) {
-                final int providerPosition = cellGroup.rows.indexOf(translationProviderRow);
-                final RecyclerView.ViewHolder providerHolder = providerPosition >= 0
-                        ? listView.findViewHolderForAdapterPosition(providerPosition) : null;
-                final TextSettingsCell cell = providerHolder != null && providerHolder.itemView instanceof TextSettingsCell
-                        ? (TextSettingsCell) providerHolder.itemView : null;
+                var cell = (TextSettingsCell) (listView.findViewHolderForAdapterPosition(cellGroup.rows.indexOf(translationProviderRow)).itemView);
                 if (NekoConfig.useTelegramTranslateInChat.Bool()) {
                     NekoConfig.translationProvider.setConfigInt(Translator.providerTelegram);
                     ((ConfigCellCustom) translationProviderRow).setEnabled(false);
-                    if (cell != null) cell.setEnabled(false);
+                    cell.setEnabled(false);
                 } else {
                     ((ConfigCellCustom) translationProviderRow).setEnabled(true);
-                    if (cell != null) cell.setEnabled(true);
+                    cell.setEnabled(true);
                 }
                 updateRows();
-                cellGroup.notifyItemChangedSafe(listAdapter, translationProviderRow);
+                listAdapter.notifyItemChanged(cellGroup.rows.indexOf(translationProviderRow));
             } else if (key.equals(NaConfig.INSTANCE.getLlmProvider().getKey())) {
                 // Rebuild LLM rows to show/hide API format and URL
                 updateRows();
@@ -644,7 +637,7 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
             } else if (key.equals(NaConfig.INSTANCE.getCustomTitleUserName().getKey())) {
                 boolean enabled = (Boolean) newValue;
                 ((ConfigCellTextInput) customTitleRow).setEnabled(!enabled);
-                cellGroup.notifyItemChangedSafe(listAdapter, customTitleRow);
+                listAdapter.notifyItemChanged(cellGroup.rows.indexOf(customTitleRow));
                 if (actionBarPreviewCell != null) {
                     actionBarPreviewCell.updateTitle();
                 }
@@ -694,7 +687,7 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
                     long keyId = result.getLongExtra(OpenPgpApi.EXTRA_SIGN_KEY_ID, 0L);
                     NekoConfig.openPGPKeyId.setConfigLong(keyId);
 
-                    cellGroup.notifyItemChangedSafe(listAdapter, keyRow);
+                    listAdapter.notifyItemChanged(cellGroup.rows.indexOf(keyRow));
 
                     break;
                 }
@@ -920,12 +913,6 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
             }
             return super.onCreateViewHolderView(viewType);
         }
-    }
-
-    @Override
-    protected boolean useCardStyle() {
-        // 回退：恢复系统分组样式，不再使用卡片/折叠布局
-        return false;
     }
 
     @Override

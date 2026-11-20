@@ -42,7 +42,6 @@ import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.RecyclerListView;
 import org.telegram.ui.Components.URLSpanNoUnderline;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Locale;
 
@@ -124,10 +123,8 @@ public abstract class BaseNekoSettingsActivity extends BaseFragment {
         FrameLayout frameLayout = (FrameLayout) fragmentView;
 
         listView = new RecyclerListView(context);
-        if (!useCardStyle()) {
-            listView.setSections();
-            listView.setSectionsDrawBackground(true);
-        }
+        listView.setSections();
+        listView.setSectionsDrawBackground(true);
         listView.setLayoutManager(layoutManager = new LinearLayoutManager(context, LinearLayoutManager.VERTICAL, false));
         listView.setVerticalScrollBarEnabled(false);
         //noinspection ConstantConditions
@@ -135,10 +132,6 @@ public abstract class BaseNekoSettingsActivity extends BaseFragment {
         frameLayout.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 
         listAdapter = createAdapter(context);
-
-        if (useCardStyle()) {
-            applyCardStyle();
-        }
 
         listView.setAdapter(listAdapter);
         listView.setOnItemClickListener(this::onItemClick);
@@ -161,47 +154,6 @@ public abstract class BaseNekoSettingsActivity extends BaseFragment {
         });
 
         return fragmentView;
-    }
-
-    /** 是否使用「每行一张圆角卡片」的设置项样式（参考 iOS 风格）。 */
-    protected boolean useCardStyle() {
-        return false;
-    }
-
-    protected xyz.nextalone.nagram.ui.CardSettingsDecoration cardDecoration;
-
-    private void applyCardStyle() {
-        if (listView == null) {
-            return;
-        }
-        listView.setSectionsDrawBackground(false);
-        listView.setClipToPadding(false);
-        listView.setPadding(0, AndroidUtilities.dp(8), 0, AndroidUtilities.dp(8));
-        if (cardDecoration == null) {
-            // 该基类的行是扁平的，每行独立成卡
-            cardDecoration = new xyz.nextalone.nagram.ui.CardSettingsDecoration(
-                    new xyz.nextalone.nagram.ui.CardSettingsDecoration.GroupProvider() {
-                        private boolean isCardRow(int position) {
-                            if (listAdapter == null || position < 0 || position >= rowCount) {
-                                return false;
-                            }
-                            final int type = listAdapter.getItemViewType(position);
-                            return type != TYPE_HEADER && type != TYPE_INFO_PRIVACY && type != TYPE_SHADOW;
-                        }
-
-                        @Override
-                        public int getGroupStart(int position) {
-                            return isCardRow(position) ? position : -1;
-                        }
-
-                        @Override
-                        public int getGroupEnd(int position) {
-                            return isCardRow(position) ? position : -2;
-                        }
-                    });
-            listView.addItemDecoration(cardDecoration);
-        }
-        listView.invalidateItemDecorations();
     }
 
     @Override
