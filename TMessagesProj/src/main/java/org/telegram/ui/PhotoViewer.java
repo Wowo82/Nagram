@@ -5222,8 +5222,12 @@ public class PhotoViewer implements NotificationCenter.NotificationCenterDelegat
                         AlertUtil.showToast(getString("NoQrFound", R.string.NoQrFound));
                     }
                 } else if (id == gallery_menu_chromecast) {
-                    ChromecastController.getInstance().setCurrentMediaAndCastIfNeeded(getCurrentChromecastMedia());
-                    castItemButton.performClick();
+                    try {
+                        ChromecastController.getInstance().setCurrentMediaAndCastIfNeeded(getCurrentChromecastMedia());
+                        castItemButton.performClick();
+                    } catch (Throwable e) {
+                        FileLog.e(e);
+                    }
                 } else if (id == gallery_menu_showall) {
                     if (currentDialogId != 0) {
                         disableShowCheck = true;
@@ -6022,10 +6026,15 @@ public class PhotoViewer implements NotificationCenter.NotificationCenterDelegat
                 }
             }
         };
-        boolean castAvailable = true;
+        boolean castAvailable;
         try {
-            castItemButton.setRouteSelector(CastContext.getSharedInstance(activityContext).getMergedSelector());
-        } catch (Exception e) {
+            // getSharedInstance() 在没有 Google Cast dynamite 模块的设备上不会立即失败，
+            // 真正抛异常的是 getSessionManager()/getMergedSelector()，所以以控制器为准。
+            castAvailable = ChromecastController.getInstance().isAvailable();
+            if (castAvailable) {
+                castItemButton.setRouteSelector(CastContext.getSharedInstance(activityContext).getMergedSelector());
+            }
+        } catch (Throwable e) {
             FileLog.e(e);
             castAvailable = false;
         }

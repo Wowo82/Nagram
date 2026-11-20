@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Environment
 import android.os.storage.StorageManager
+import android.provider.MediaStore
 import org.telegram.messenger.AndroidUtilities
 import org.telegram.messenger.ApplicationLoader
 import org.telegram.messenger.FileLog
@@ -105,6 +106,8 @@ object EnvUtil {
     @Volatile
     private var publicLeftoversCleaned = false
 
+    private const val PROBE_MAX_ENTRIES = 300
+
     /**
      * 把公共 Documents 目录里的内容记进应用日志。
      *
@@ -117,16 +120,88 @@ object EnvUtil {
             FileLog.d("DocumentsProbe: root=${docs.absolutePath} exists=${docs.exists()} canRead=${docs.canRead()}")
             val files = docs.listFiles() ?: return
             FileLog.d("DocumentsProbe: entries=${files.size}")
+            var budget = PROBE_MAX_ENTRIES
             for (file in files) {
                 if (file.isDirectory) {
                     val children = file.listFiles()
                     FileLog.d("DocumentsProbe: dir ${file.name} children=${children?.size ?: -1}")
+                    budget = probeDirectory(file, 1, budget)
                 } else {
                     FileLog.d("DocumentsProbe: file ${file.name} size=${file.length()} mtime=${file.lastModified()}")
+                    budget--
+                }
+                if (budget <= 0) {
+                    FileLog.d("DocumentsProbe: truncated, more than $PROBE_MAX_ENTRIES entries")
+                    break
                 }
             }
         } catch (t: Throwable) {
             FileLog.e(t)
+        }
+    }
+
+    /** 递归列出 Documents 子目录内容，最多 depth 层，打印完整路径便于判断归属。 */
+    private fun probeDirectory(dir: File, depth: Int, budget: Int): Int {
+        if (depth > 2 || budget <= 0) return budget
+        var left = budget
+        val files = dir.listFiles() ?: return left
+        for (file in files) {
+            if (left <= 0) break
+            if (file.isDirectory) {
+                FileLog.d("DocumentsProbe: dir2 ${file.absolutePath} children=${file.listFiles()?.size ?: -1}")
+                left = probeDirectory(file, depth + 1, left - 1)
+            } else {
+                FileLog.d("DocumentsProbe: file2 ${file.absolutePath} size=${file.length()} mtime=${file.lastModified()}")
+                left--
+            }
+        }
+        return left
+    }
+
+    /**
+     * 问系统：Documents 下这些文件到底是哪个包创建的。
+     *
+     * MediaStore 的 OWNER_PACKAGE_NAME 是唯一能一锤定音的证据：
+     * 如果 owner 是 xyz.nextalone.nagram，说明本应用写过；否则就是别的应用或用户自己放进去的。
+     * 需要 READ_EXTERNAL_STORAGE，权限还没给时会抛 SecurityException，直接忽略。
+     */
+    private fun probeDocumentsViaMediaStore() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            FileLog.d("DocumentsProbe: media skipped, sdk=${Build.VERSION.SDK_INT}")
+            return
+        }
+        try {
+            val resolver = ApplicationLoader.applicationContext.contentResolver
+            val projection = arrayOf(
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.RELATIVE_PATH,
+                MediaStore.MediaColumns.OWNER_PACKAGE_NAME,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.DATE_ADDED
+            )
+            val owners = HashMap<String, Int>()
+            var rows = 0
+            resolver.query(
+                MediaStore.Files.getContentUri("external"),
+                projection,
+                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?",
+                arrayOf("Documents%"),
+                null
+            )?.use { cursor ->
+                while (cursor.moveToNext() && rows < PROBE_MAX_ENTRIES) {
+                    val name = cursor.getString(0)
+                    val rel = cursor.getString(1)
+                    val owner = cursor.getString(2) ?: "null"
+                    val size = cursor.getLong(3)
+                    val added = cursor.getLong(4)
+                    owners[owner] = (owners[owner] ?: 0) + 1
+                    FileLog.d("DocumentsProbe: media name=$name rel=$rel owner=$owner size=$size added=$added")
+                    rows++
+                }
+            }
+            FileLog.d("DocumentsProbe: media rows=$rows owners=$owners own=${ApplicationLoader.applicationContext.packageName}")
+        } catch (t: Throwable) {
+            FileLog.e("DocumentsProbe: media query failed", t)
         }
     }
 
@@ -145,6 +220,11 @@ object EnvUtil {
                         cleanupLegacyCache(dir)
                     }
                 }
+            } catch (_: Throwable) {
+            }
+            // 等权限弹窗处理完、MediaProvider 就绪之后再问一次归属
+            try {
+                AndroidUtilities.runOnUIThread({ probeDocumentsViaMediaStore() }, 12_000)
             } catch (_: Throwable) {
             }
         }.start()
