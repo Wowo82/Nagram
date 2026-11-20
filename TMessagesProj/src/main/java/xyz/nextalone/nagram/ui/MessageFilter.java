@@ -44,6 +44,8 @@ public class MessageFilter {
 
     private static volatile Pattern cachedPattern;
     private static volatile String cachedRaw;
+    /** 是否已经把历史格式迁移成「关键词1|关键词2」。 */
+    private static volatile boolean normalizedOnce;
 
     /** 读取原始正则文本，未设置时返回空串。 */
     public static String getRaw() {
@@ -171,9 +173,21 @@ public class MessageFilter {
 
     /** 编译后的正则；未配置或语法错误时返回 null。 */
     public static Pattern getPattern() {
-        final String raw = getRaw();
+        String raw = getRaw();
         if (TextUtils.isEmpty(raw)) {
             return null;
+        }
+        // 一次性把历史数据（\Q...\E、多余竖线）就地规范化落库，
+        // 避免用户不打开弹窗就永远看到旧格式。语义等价，不需要广播。
+        if (!normalizedOnce) {
+            normalizedOnce = true;
+            final String normalized = normalizeRaw(raw);
+            if (!normalized.equals(raw)) {
+                MessagesController.getGlobalMainSettings().edit().putString(KEY, normalized).apply();
+                raw = normalized;
+                cachedRaw = null;
+                cachedPattern = null;
+            }
         }
         if (raw.equals(cachedRaw)) {
             return cachedPattern;

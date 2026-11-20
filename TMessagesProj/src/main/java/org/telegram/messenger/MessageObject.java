@@ -4938,7 +4938,14 @@ public class MessageObject {
 
     /** 规则变化后重算并就地应用动作。 */
     public void reapplyFilterAction() {
+        final boolean hadModification = filterCollapsedApplied || filterSpoilerEntity != null;
         filterAction = -1;
+        final int act = getFilterAction();
+        if (act == MessageFilterRules.ACTION_NONE && !hadModification) {
+            // 绝大多数消息没有任何动作，跳过 generateLayout / setType 这些重活，
+            // 避免一次性重算上千条时卡住主线程
+            return;
+        }
         applyFilterActionNow();
     }
 
@@ -4959,6 +4966,10 @@ public class MessageObject {
     /** 把动作落到 messageText / entities 上，可重复调用。 */
     private void applyFilterActionNow() {
         final int act = getFilterAction();
+        if (act == MessageFilterRules.ACTION_HIDE && !filterCollapsedApplied && filterSpoilerEntity == null) {
+            // 纯隐藏不需要改文本：消息随后会从列表移除，跳过 generateLayout 这类重活
+            return;
+        }
         if (act == MessageFilterRules.ACTION_SPOILER && filterSpoilerEntity == null && !isRestrictedMessage) {
             final int len = messageOwner != null && messageOwner.message != null ? messageOwner.message.length() : 0;
             if (len > 0 && messageOwner.entities != null) {

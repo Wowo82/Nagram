@@ -4,7 +4,6 @@
 package xyz.nextalone.nagram.ui;
 
 import android.content.Context;
-import android.content.DialogInterface;
 import android.text.TextUtils;
 import android.widget.Toast;
 
@@ -13,9 +12,7 @@ import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.tgnet.TLRPC;
-import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BaseFragment;
-import org.telegram.ui.ActionBar.Theme;
 
 import java.util.List;
 
@@ -36,9 +33,46 @@ public final class MessageBlocker {
     private MessageBlocker() {
     }
 
-    /** 弹出屏蔽方式选择框（整个消息）。 */
-    public static void showDialog(BaseFragment fragment, MessageObject msg) {
-        showDialog(fragment, msg, null);
+    /**
+     * 「屏蔽」按钮（多选菜单 / 单条消息「更多」菜单）的统一入口。
+     *
+     * <p>不弹二次选择框：直接取第一条有文字的消息，把文字写进消息过滤器；
+     * 整批消息都没有文字时退化为屏蔽发送者。</p>
+     *
+     * @return true 表示已经写入或本来就存在
+     */
+    public static boolean blockMessages(BaseFragment fragment, List<MessageObject> msgs) {
+        if (fragment == null || msgs == null || msgs.isEmpty()) {
+            return false;
+        }
+        final Context context = fragment.getParentActivity();
+        if (context == null) {
+            return false;
+        }
+        String keyword = "";
+        MessageObject senderSource = null;
+        for (int i = 0, N = msgs.size(); i < N; i++) {
+            final MessageObject msg = msgs.get(i);
+            if (msg == null) {
+                continue;
+            }
+            final String text = buildKeyword(msg);
+            if (!TextUtils.isEmpty(text)) {
+                keyword = text;
+                break;
+            }
+            if (senderSource == null && getSenderId(msg) != 0) {
+                senderSource = msg;
+            }
+        }
+        if (!TextUtils.isEmpty(keyword)) {
+            return blockKeyword(context, keyword);
+        }
+        if (senderSource != null) {
+            return blockSender(context, getSenderId(senderSource), getSenderName(senderSource));
+        }
+        Toast.makeText(context, "这条消息没有可匹配的文字", Toast.LENGTH_SHORT).show();
+        return false;
     }
 
     /**
@@ -59,70 +93,10 @@ public final class MessageBlocker {
         return blockKeyword(context, pickKeyword(msg, selectedText));
     }
 
-    /**
-     * 弹出屏蔽方式选择框。
-     *
-     * @param selectedText 文本选择工具条里选中的文字，为空时退回到整条消息的正文
-     */
-    public static void showDialog(BaseFragment fragment, MessageObject msg, CharSequence selectedText) {
-        if (fragment == null || msg == null) {
-            return;
-        }
-        final Context context = fragment.getParentActivity();
-        if (context == null) {
-            return;
-        }
-        final Theme.ResourcesProvider resourcesProvider = fragment.getResourceProvider();
-        final long senderId = getSenderId(msg);
-        // 供匿名内部类引用，必须是 final
-        final String keyword = pickKeyword(msg, selectedText);
-
-        final CharSequence[] items;
-        final int[] actions; // 0 = 发送者，1 = 文字，2 = 编辑过滤器
-        if (senderId != 0) {
-            items = new CharSequence[]{
-                    "屏蔽发送者：" + getSenderName(msg),
-                    TextUtils.isEmpty(keyword) ? "屏蔽这条消息的文字" : "屏蔽包含「" + keyword + "」的消息",
-                    "编辑消息过滤器…"
-            };
-            actions = new int[]{0, 1, 2};
-        } else {
-            items = new CharSequence[]{
-                    TextUtils.isEmpty(keyword) ? "屏蔽这条消息的文字" : "屏蔽包含「" + keyword + "」的消息",
-                    "编辑消息过滤器…"
-            };
-            actions = new int[]{1, 2};
-        }
-
-        final AlertDialog.Builder builder = new AlertDialog.Builder(context, resourcesProvider);
-        builder.setTitle("屏蔽");
-        builder.setItems(items, new DialogInterface.OnClickListener() {
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                if (which < 0 || which >= actions.length) {
-                    return;
-                }
-                switch (actions[which]) {
-                    case 0:
-                        blockSender(context, senderId, getSenderName(msg));
-                        break;
-                    case 1:
-                        blockKeyword(context, keyword);
-                        break;
-                    default:
-                        MessageFilter.showDialog(fragment);
-                        break;
-                }
-            }
-        });
-        builder.setNegativeButton(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.Cancel), null);
-        fragment.showDialog(builder.create());
-    }
-
     /** 向过滤规则追加「发送者」规则。 */
-    private static void blockSender(Context context, long senderId, String name) {
+    private static boolean blockSender(Context context, long senderId, String name) {
         if (senderId == 0) {
-            return;
+            return false;
         }
         List<MessageFilterRules.Rule> rules = MessageFilterRules.loadRules();
         final String value = String.valueOf(senderId);
@@ -134,7 +108,7 @@ public final class MessageBlocker {
                 MessageFilterRules.saveRules(rules);
                 NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.messageFilterRulesChanged);
                 Toast.makeText(context, "该发送者已在过滤列表中", Toast.LENGTH_SHORT).show();
-                return;
+                return true;
             }
         }
         MessageFilterRules.Rule rule = new MessageFilterRules.Rule();
@@ -147,6 +121,7 @@ public final class MessageBlocker {
         MessageFilterRules.saveRules(rules);
         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.messageFilterRulesChanged);
         Toast.makeText(context, "已屏蔽发送者" + (TextUtils.isEmpty(name) ? "" : "：" + name) + "，已立即生效", Toast.LENGTH_SHORT).show();
+        return true;
     }
 
     /**
@@ -202,7 +177,7 @@ public final class MessageBlocker {
         return s;
     }
 
-    /** 取消息正文/标题，过长时截断。 */
+    /** 取消息正文/标题，按首个句读切短，避免把整段广告塞进正则。 */
     private static String buildKeyword(MessageObject msg) {
         CharSequence text = msg.messageText;
         if (TextUtils.isEmpty(text)) {
@@ -211,11 +186,31 @@ public final class MessageBlocker {
         if (TextUtils.isEmpty(text)) {
             return "";
         }
-        String s = text.toString().trim().replace('\n', ' ');
-        if (s.length() > MAX_KEYWORD_LENGTH) {
+        return shorten(text.toString().trim().replace('\n', ' '));
+    }
+
+    /**
+     * 把一段正文压成适合做过滤关键词的短语。
+     *
+     * <p>优先取第一个句读（逗号 / 句号 / 问号 / 叹号 / 分号）之前的部分，
+     * 这样「这个 vpn 在国外运营，国外合法…」只会写入「这个 vpn 在国外运营」。
+     * 切完太短（不足 6 个字符）时退回按长度截断，避免误伤整类消息。</p>
+     */
+    private static String shorten(String s) {
+        final String seps = "，。！？；、,.;!?|";
+        int cut = -1;
+        for (int i = 0, N = s.length(); i < N && i < MAX_KEYWORD_LENGTH; i++) {
+            if (seps.indexOf(s.charAt(i)) >= 0) {
+                cut = i;
+                break;
+            }
+        }
+        if (cut >= 6) {
+            s = s.substring(0, cut);
+        } else if (s.length() > MAX_KEYWORD_LENGTH) {
             s = s.substring(0, MAX_KEYWORD_LENGTH);
         }
-        return s;
+        return s.trim();
     }
 
     /**

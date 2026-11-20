@@ -23686,6 +23686,10 @@ public class ChatActivity extends BaseFragment implements
                 }
             }
         }
+        if (universalNotify) {
+            // 相册：caption 命中时同组图片也要一起消失，加载完成后统一收口
+            applyMessageFiltersToLoadedMessages(false);
+        }
     }
 
     private void didReceivedNotification2(int id, int account, final Object... args) {
@@ -28258,52 +28262,65 @@ public class ChatActivity extends BaseFragment implements
      * 只做 UI 层处理，不删服务器消息、不写数据库。</p>
      */
     private void applyMessageFiltersToLoadedMessages() {
+        applyMessageFiltersToLoadedMessages(true);
+    }
+
+    /**
+     * @param notifyIfNothingHidden 没有命中时是否还要刷新列表（规则变更时需要，刚加载完时不需要）
+     */
+    private void applyMessageFiltersToLoadedMessages(boolean notifyIfNothingHidden) {
         if (messages == null || messages.isEmpty() || isInScheduleMode()) {
             return;
         }
         final ArrayList<Integer> ids = new ArrayList<>();
         final HashSet<Integer> idSet = new HashSet<>();
+        // 先按 grouped_id 就地聚合：相册的说明文字只挂在其中一条上，
+        // 直接依赖 groupedMessagesMap 可能在刚加载完、分组还没构建时漏掉同组消息。
+        final LongSparseArray<ArrayList<MessageObject>> groups = new LongSparseArray<>();
         for (int a = 0, N = messages.size(); a < N; a++) {
-            MessageObject object = messages.get(a);
+            final MessageObject object = messages.get(a);
             if (object == null || object.getId() == 0 || object.isDateObject) {
                 continue;
             }
             object.reapplyFilterAction();
-            if (object.isFilterHidden() && idSet.add(object.getId())) {
-                ids.add(object.getId());
+            final long groupId = object.getGroupId();
+            if (groupId != 0) {
+                ArrayList<MessageObject> list = groups.get(groupId);
+                if (list == null) {
+                    list = new ArrayList<>();
+                    groups.put(groupId, list);
+                }
+                list.add(object);
             }
         }
-        // 相册：说明文字只挂在其中一条上，整组取最强动作
-        if (groupedMessagesMap != null) {
-            for (int i = 0, N = groupedMessagesMap.size(); i < N; i++) {
-                MessageObject.GroupedMessages group = groupedMessagesMap.valueAt(i);
-                if (group == null || group.messages == null || group.messages.isEmpty()) {
-                    continue;
+        // 整组取最强动作，再传播给每一条
+        for (int i = 0, N = groups.size(); i < N; i++) {
+            final ArrayList<MessageObject> group = groups.valueAt(i);
+            int maxAction = xyz.nextalone.nagram.ui.MessageFilterRules.ACTION_NONE;
+            for (int j = 0, M = group.size(); j < M; j++) {
+                final MessageObject item = group.get(j);
+                if (item != null && item.getFilterAction() > maxAction) {
+                    maxAction = item.getFilterAction();
                 }
-                int maxAction = xyz.nextalone.nagram.ui.MessageFilterRules.ACTION_NONE;
-                for (int j = 0, M = group.messages.size(); j < M; j++) {
-                    MessageObject item = group.messages.get(j);
-                    if (item != null && item.getFilterAction() > maxAction) {
-                        maxAction = item.getFilterAction();
-                    }
+            }
+            if (maxAction == xyz.nextalone.nagram.ui.MessageFilterRules.ACTION_NONE) {
+                continue;
+            }
+            for (int j = 0, M = group.size(); j < M; j++) {
+                final MessageObject item = group.get(j);
+                if (item != null) {
+                    item.applyGroupFilterAction(maxAction);
                 }
-                if (maxAction == xyz.nextalone.nagram.ui.MessageFilterRules.ACTION_NONE) {
-                    continue;
-                }
-                for (int j = 0, M = group.messages.size(); j < M; j++) {
-                    MessageObject item = group.messages.get(j);
-                    if (item != null) {
-                        item.applyGroupFilterAction(maxAction);
-                    }
-                }
-                // 整组传播后再收集一次：组里只有一条命中（比如 caption 命中）时，
-                // 同组的图片 / 视频也要一起从列表移除，否则会留下半条广告。
-                for (int j = 0, M = group.messages.size(); j < M; j++) {
-                    MessageObject item = group.messages.get(j);
-                    if (item != null && item.getId() != 0 && item.isFilterHidden() && idSet.add(item.getId())) {
-                        ids.add(item.getId());
-                    }
-                }
+            }
+        }
+        // 传播之后统一收集：组里只有 caption 命中时，同组的图片 / 视频也要一起移除
+        for (int a = 0, N = messages.size(); a < N; a++) {
+            final MessageObject object = messages.get(a);
+            if (object == null || object.getId() == 0 || object.isDateObject) {
+                continue;
+            }
+            if (object.isFilterHidden() && idSet.add(object.getId())) {
+                ids.add(object.getId());
             }
         }
         if (!ids.isEmpty()) {
@@ -28312,7 +28329,7 @@ public class ChatActivity extends BaseFragment implements
                 channelId = -dialog_id;
             }
             processDeletedMessages(ids, channelId, false);
-        } else if (chatAdapter != null) {
+        } else if (notifyIfNothingHidden && chatAdapter != null) {
             chatAdapter.notifyDataSetChanged();
         }
     }
@@ -46854,14 +46871,12 @@ public class ChatActivity extends BaseFragment implements
         } else if (id == nkbtn_translate) {
             nkbtn_translate(null, selectedObjectGroup);
         } else if (id == nkbtn_block) {
-            MessageObject target = selectedObject;
-            if (target == null) {
-                ArrayList<MessageObject> selected = getSelectedMessages();
-                if (!selected.isEmpty()) {
-                    target = selected.get(0);
-                }
+            ArrayList<MessageObject> blockTargets = getSelectedMessages();
+            if (blockTargets.isEmpty() && selectedObject != null) {
+                blockTargets = new ArrayList<>();
+                blockTargets.add(selectedObject);
             }
-            xyz.nextalone.nagram.ui.MessageBlocker.showDialog(this, target);
+            xyz.nextalone.nagram.ui.MessageBlocker.blockMessages(this, blockTargets);
         } else if (id == nkbtn_unpin) {
             for (MessageObject selectedMessage : getSelectedMessages()) {
                 if (selectedMessage.messageOwner.pinned) {
@@ -47246,7 +47261,9 @@ public class ChatActivity extends BaseFragment implements
                 break;
             }
             case nkbtn_block: {
-                xyz.nextalone.nagram.ui.MessageBlocker.showDialog(this, selectedObject);
+                if (selectedObject != null) {
+                    xyz.nextalone.nagram.ui.MessageBlocker.blockMessages(this, java.util.Collections.singletonList(selectedObject));
+                }
                 break;
             }
             case nkbtn_detail: {
