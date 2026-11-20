@@ -113,6 +113,9 @@ object EnvUtil {
 
     private const val PROBE_MAX_ENTRIES = 300
 
+    /** FileObserver.ISDIR 是 @hide，SDK stub 里没有，只能自己写常量。 */
+    private const val FILE_OBSERVER_ISDIR = 0x40000000
+
     @Volatile
     private var documentsWatcher: FileObserver? = null
 
@@ -154,7 +157,7 @@ object EnvUtil {
     /** 把一次 inotify 事件展开成可判断的字段。 */
     private fun recordDocumentsEvent(docs: File, event: Int, path: String) {
         try {
-            val isDir = (event and FileObserver.ISDIR) != 0
+            val isDir = (event and FILE_OBSERVER_ISDIR) != 0
             val sb = StringBuilder("DocumentsWatch: ")
                 .append(fileObserverEventName(event))
                 .append(" path=").append(path)
