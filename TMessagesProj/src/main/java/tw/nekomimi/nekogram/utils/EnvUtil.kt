@@ -6,6 +6,7 @@ import android.os.Environment
 import android.os.storage.StorageManager
 import org.telegram.messenger.AndroidUtilities
 import org.telegram.messenger.ApplicationLoader
+import org.telegram.messenger.FileLog
 import tw.nekomimi.nekogram.NekoConfig
 import java.io.File
 import java.util.*
@@ -104,6 +105,31 @@ object EnvUtil {
     @Volatile
     private var publicLeftoversCleaned = false
 
+    /**
+     * 把公共 Documents 目录里的内容记进应用日志。
+     *
+     * Telegram 自身的 Java 代码里没有任何 DIRECTORY_DOCUMENTS 写入点，
+     * 但用户设备上仍会出现聊天缓存，所以这里把现场记录下来，
+     * 下次导出日志就能看到文件名、大小与修改时间，直接定位来源。
+     */
+    private fun probePublicDocuments(docs: File) {
+        try {
+            FileLog.d("DocumentsProbe: root=${docs.absolutePath} exists=${docs.exists()} canRead=${docs.canRead()}")
+            val files = docs.listFiles() ?: return
+            FileLog.d("DocumentsProbe: entries=${files.size}")
+            for (file in files) {
+                if (file.isDirectory) {
+                    val children = file.listFiles()
+                    FileLog.d("DocumentsProbe: dir ${file.name} children=${children?.size ?: -1}")
+                } else {
+                    FileLog.d("DocumentsProbe: file ${file.name} size=${file.length()} mtime=${file.lastModified()}")
+                }
+            }
+        } catch (t: Throwable) {
+            FileLog.e(t)
+        }
+    }
+
     /** 后台清理公共 Documents 里旧版本留下的缓存碎片。 */
     private fun cleanupPublicLeftoversAsync() {
         if (publicLeftoversCleaned) return
@@ -111,10 +137,13 @@ object EnvUtil {
         Thread {
             try {
                 val docs = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+                probePublicDocuments(docs)
                 cleanupLegacyCache(docs)
-                val nagramDir = File(docs, "Nagram")
-                if (nagramDir.isDirectory) {
-                    cleanupLegacyCache(nagramDir)
+                for (name in arrayOf("Nagram", "Telegram")) {
+                    val dir = File(docs, name)
+                    if (dir.isDirectory) {
+                        cleanupLegacyCache(dir)
+                    }
                 }
             } catch (_: Throwable) {
             }

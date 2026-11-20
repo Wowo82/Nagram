@@ -6780,11 +6780,16 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         if (hasMainTabs) {
             actionModeCloseView = new ImageView(getContext());
             actionModeCloseView.setScaleType(ImageView.ScaleType.CENTER);
-            actionModeCloseView.setImageDrawable(new BackDrawable(true));
+            // 用固定的关闭图标 + 显式尺寸：BackDrawable 在部分机型上被测量成 0 宽，
+            // 多选栏就只剩计数、左侧的关闭按钮既看不到也点不到
+            actionModeCloseView.setImageResource(R.drawable.ic_close_white);
             ThemeBind.colorFilter(actionModeCloseView, Theme.key_actionBarActionModeDefaultIcon, getResourceProvider(), PorterDuff.Mode.MULTIPLY);
             ThemeBind.selectorBackground(actionModeCloseView, Theme.createSelectorDrawable(getThemedColor(Theme.key_actionBarActionModeDefaultSelector)), null, ThemeBind.of(Theme.key_actionBarActionModeDefaultSelector), getResourceProvider());
             actionModeCloseView.setOnClickListener(v -> hideActionMode(true));
-            actionMode.addView(actionModeCloseView, LayoutHelper.createLinear(54, 54, Gravity.CENTER_VERTICAL));
+            actionModeCloseView.setContentDescription(LocaleController.getString(R.string.Close));
+            final LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(AndroidUtilities.dp(56), AndroidUtilities.dp(56));
+            closeParams.gravity = Gravity.CENTER_VERTICAL;
+            actionMode.addView(actionModeCloseView, closeParams);
             actionModeViews.add(actionModeCloseView);
         }
 
