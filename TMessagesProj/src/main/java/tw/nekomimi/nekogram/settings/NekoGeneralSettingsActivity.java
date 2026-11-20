@@ -28,7 +28,6 @@ import org.openintents.openpgp.util.OpenPgpApi;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.ContactsController;
-import org.telegram.messenger.FileLog;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.NotificationCenter;
@@ -38,7 +37,6 @@ import org.telegram.messenger.SharedConfig;
 import org.telegram.messenger.UserConfig;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.ui.ActionBar.ActionBarLayout;
-import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.INavigationLayout;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.ActionBar.ThemeDescription;
@@ -67,7 +65,6 @@ import tw.nekomimi.nekogram.ui.PopupBuilder;
 import tw.nekomimi.nekogram.transtale.Translator;
 import tw.nekomimi.nekogram.transtale.TranslatorKt;
 import tw.nekomimi.nekogram.utils.AlertUtil;
-import tw.nekomimi.nekogram.utils.DocumentsLeftoverCleaner;
 import tw.nekomimi.nekogram.utils.PGPUtil;
 
 import tw.nekomimi.nekogram.config.ConfigItem;
@@ -315,7 +312,6 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
     private final AbstractConfigCell customSavePathRow = cellGroup.appendCell(new ConfigCellTextInput(null, NekoConfig.customSavePath,
             LocaleController.getString("customSavePathHint", R.string.customSavePathHint), null,
             (input) -> input.matches("^[A-za-z0-9.]{1,255}$") || input.isEmpty() ? input : (String) NekoConfig.customSavePath.defaultValue));
-    private final AbstractConfigCell cleanDocumentsRow = cellGroup.appendCell(new ConfigCellCustom("CleanPublicDocuments", CellGroup.ITEM_TYPE_TEXT_SETTINGS_CELL, true));
     private final AbstractConfigCell useSystemUnlockRow = cellGroup.appendCell(new ConfigCellTextCheck(NaConfig.INSTANCE.getUseSystemUnlock()));
     private final AbstractConfigCell disableUndoRow = cellGroup.appendCell(new ConfigCellTextCheck(NekoConfig.disableUndo));
     private final AbstractConfigCell showIdAndDcRow = cellGroup.appendCell(new ConfigCellTextCheck(NekoConfig.showIdAndDc));
@@ -417,10 +413,6 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
                     return;
                 }
                 if (position == cellGroup.rows.indexOf(filterTabsPreviewRow)) {
-                    return;
-                }
-                if (position == cellGroup.rows.indexOf(cleanDocumentsRow)) {
-                    onClickCleanDocuments();
                     return;
                 }
                 if (position == cellGroup.rows.indexOf(pgpAppRow)) {
@@ -728,111 +720,7 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
     public void onActivityResultFragment(int requestCode, int resultCode, Intent data) {
         if (requestCode == 114 && resultCode == Activity.RESULT_OK) {
             requestKey(data);
-        } else if (requestCode == DocumentsLeftoverCleaner.REQUEST_CODE) {
-            if (resultCode != Activity.RESULT_OK) {
-                return;
-            }
-            if (DocumentsLeftoverCleaner.takeAccess(getParentActivity(), data)) {
-                if (listAdapter != null) {
-                    listAdapter.notifyItemChanged(cellGroup.rows.indexOf(cleanDocumentsRow));
-                }
-                scanPublicDocuments();
-            } else {
-                AlertUtil.showToast("请选择内部存储根目录下的 Documents");
-            }
         }
-    }
-
-    /**
-     * 公共 Documents 目录里的缓存残留处理入口。
-     *
-     * 本应用的目标 SDK 在 33 以上且没有申请全盘访问权限，分区存储下既写不进公共 Documents，
-     * listFiles() 也看不到别的应用写进去的条目。要处理这些文件，只能由用户通过系统
-     * 选择器把 Documents 目录授权给本应用，授权由系统持久化保存。
-     */
-    private void onClickCleanDocuments() {
-        final Activity activity = getParentActivity();
-        if (activity == null) {
-            return;
-        }
-        if (DocumentsLeftoverCleaner.hasAccess(activity)) {
-            scanPublicDocuments();
-            return;
-        }
-        try {
-            activity.startActivityForResult(DocumentsLeftoverCleaner.buildRequestIntent(),
-                    DocumentsLeftoverCleaner.REQUEST_CODE);
-        } catch (Throwable t) {
-            AlertUtil.showToast("当前系统不支持目录授权");
-        }
-    }
-
-    private void scanPublicDocuments() {
-        final Activity activity = getParentActivity();
-        if (activity == null) {
-            return;
-        }
-        new Thread(() -> {
-            final List<DocumentsLeftoverCleaner.Entry> all = DocumentsLeftoverCleaner.scan(activity);
-            int count = 0;
-            int hlsCount = 0;
-            long bytes = 0;
-            StringBuilder names = new StringBuilder();
-            for (DocumentsLeftoverCleaner.Entry entry : all) {
-                // 根目录下的全部条目都记进日志，用于反推这些文件到底是谁写的
-                FileLog.d("DocScan: name=" + entry.name + " size=" + entry.size
-                        + " mtime=" + entry.modified + " leftover=" + entry.leftover + " hls=" + entry.hls);
-                if (!entry.leftover) {
-                    continue;
-                }
-                count++;
-                if (entry.hls) {
-                    hlsCount++;
-                }
-                if (entry.size > 0) {
-                    bytes += entry.size;
-                }
-                if (count <= 12) {
-                    names.append('\n').append(entry.name);
-                }
-            }
-            final int total = count;
-            final int hls = hlsCount;
-            final long totalBytes = bytes;
-            final String sample = names.toString();
-            AndroidUtilities.runOnUIThread(() -> {
-                if (getParentActivity() == null) {
-                    return;
-                }
-                if (total == 0) {
-                    AlertUtil.showToast("Documents 里没有缓存形态的残留文件");
-                    return;
-                }
-                AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
-                builder.setTitle("清理公共目录残留");
-                builder.setMessage("共找到 " + total + " 个缓存文件，合计 "
-                        + AndroidUtilities.formatFileSize(totalBytes)
-                        + (hls > 0 ? "，其中 " + hls + " 个是 HLS 播放列表" : "")
-                        + "。\n\n这些文件不是本应用创建的，删除后不影响聊天记录。"
-                        + sample + (total > 12 ? "\n…" : ""));
-                builder.setPositiveButton("删除", (dialog, which) -> deletePublicDocuments());
-                builder.setNegativeButton(LocaleController.getString(R.string.Cancel), null);
-                showDialog(builder.create());
-            });
-        }, "documents-cleaner").start();
-    }
-
-    private void deletePublicDocuments() {
-        final Activity activity = getParentActivity();
-        if (activity == null) {
-            return;
-        }
-        new Thread(() -> {
-            final int deleted = DocumentsLeftoverCleaner.deleteLeftovers(activity,
-                    DocumentsLeftoverCleaner.scan(activity));
-            AndroidUtilities.runOnUIThread(() -> AlertUtil.showToast(
-                    deleted > 0 ? "已删除 " + deleted + " 个缓存文件" : "没有可删除的文件"));
-        }, "documents-cleaner").start();
     }
 
     private static class OpenPgpProviderEntry {
@@ -982,9 +870,6 @@ private final AbstractConfigCell defaultHlsVideoQualityRow = cellGroup.appendCel
                             textCell.setTextAndValue(LocaleController.getString(R.string.TransInputToLang), NekoXConfig.formatLang(NekoConfig.translateInputLang.String()), divider);
                         } else if (position == cellGroup.rows.indexOf(llmSettingsRow)) {
                             textCell.setTextAndValue(LocaleController.getString("LLMTranslatorSettings", R.string.LLMTranslatorSettings), "", divider);
-                        } else if (position == cellGroup.rows.indexOf(cleanDocumentsRow)) {
-                            textCell.setTextAndValue("清理公共目录残留",
-                                    DocumentsLeftoverCleaner.hasAccess(getParentActivity()) ? "已授权" : "未授权", divider);
                         }
                     } else if (holder.itemView instanceof FilterTabsPreviewCell) {
                         ((FilterTabsPreviewCell) holder.itemView).updateTabs(false);
