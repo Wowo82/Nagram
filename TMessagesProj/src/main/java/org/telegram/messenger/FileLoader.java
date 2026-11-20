@@ -1366,7 +1366,13 @@ public class FileLoader extends BaseController {
             if (attach instanceof TLRPC.Document) {
                 TLRPC.Document document = (TLRPC.Document) attach;
                 if (!TextUtils.isEmpty(document.localPath)) {
-                    return new File(document.localPath);
+                    final File localPathFile = new File(document.localPath);
+                    if (localPathFile.getAbsolutePath().contains("/Documents/")) {
+                        FileLog.d("PathTrace: branch=localPath doc=" + document.id + " dc=" + document.dc_id
+                                + " forceCache=" + forceCache + " path=" + localPathFile
+                                + " mediaCache=" + getDirectory(MEDIA_DIR_CACHE));
+                    }
+                    return localPathFile;
                 }
                 if (document.key != null) {
                     type = MEDIA_DIR_CACHE;
@@ -1446,10 +1452,21 @@ public class FileLoader extends BaseController {
         if (documentId != 0) {
             String path = getInstance(UserConfig.selectedAccount).getFileDatabase().getPath(documentId, dcId, type, useFileDatabaseQueue);
             if (path != null) {
+                if (path.contains("/Documents/")) {
+                    FileLog.d("PathTrace: branch=database doc=" + documentId + " dc=" + dcId + " type=" + type
+                            + " forceCache=" + forceCache + " path=" + path
+                            + " mediaCache=" + getDirectory(MEDIA_DIR_CACHE));
+                }
                 return new File(path);
             }
         }
-        return new File(dir, getAttachFileName(attach, ext));
+        final File attachFile = new File(dir, getAttachFileName(attach, ext));
+        if (attachFile.getAbsolutePath().contains("/Documents/")) {
+            FileLog.d("PathTrace: branch=dir doc=" + documentId + " dc=" + dcId + " type=" + type
+                    + " forceCache=" + forceCache + " path=" + attachFile
+                    + " dir=" + dir.getAbsolutePath() + " mediaCache=" + getDirectory(MEDIA_DIR_CACHE));
+        }
+        return attachFile;
     }
 
     public FilePathDatabase getFileDatabase() {
