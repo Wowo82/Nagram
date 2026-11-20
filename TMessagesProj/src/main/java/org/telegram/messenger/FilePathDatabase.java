@@ -366,46 +366,6 @@ public class FilePathDatabase {
         });
     }
 
-    /**
-     * 排查用：把库里指向公共目录的路径原样打出来。只读，不改表、不删文件。
-     *
-     * 缓存目录曾被设成公共目录的时期，getPathToAttach 会把 Documents/5_xxx 这类
-     * 路径写进这张表；之后即使目录配置恢复正常，getPath 仍会返回旧路径，
-     * 文件就会反复出现在公共目录里。这里把命中的行打出来确认这条链路。
-     */
-    public void probePublicPaths() {
-        postRunnable(() -> {
-            ensureDatabaseCreated();
-            if (database == null) {
-                FileLog.d("PathDbProbe: database is null");
-                return;
-            }
-            SQLiteCursor cursor = null;
-            try {
-                cursor = database.queryFinalized(
-                        "SELECT document_id, dc_id, type, path FROM paths WHERE " +
-                                "path LIKE '%/Documents/%' OR path LIKE '%/Download/%' OR " +
-                                "path LIKE '%/Downloads/%' OR path LIKE '%/Movies/%' OR " +
-                                "path LIKE '%/Pictures/%' OR path LIKE '%/Music/%' LIMIT 200");
-                int count = 0;
-                while (cursor.next()) {
-                    FileLog.d("PathDbProbe: doc=" + cursor.longValue(0)
-                            + " dc=" + cursor.intValue(1)
-                            + " type=" + cursor.intValue(2)
-                            + " path=" + cursor.stringValue(3));
-                    count++;
-                }
-                FileLog.d("PathDbProbe: account=" + currentAccount + " matches=" + count);
-            } catch (Throwable e) {
-                FileLog.e(e);
-            } finally {
-                if (cursor != null) {
-                    cursor.dispose();
-                }
-            }
-        });
-    }
-
     public boolean hasAnotherRefOnFile(String path) {
         CountDownLatch syncLatch = new CountDownLatch(1);
         boolean[] res = new boolean[]{false};
