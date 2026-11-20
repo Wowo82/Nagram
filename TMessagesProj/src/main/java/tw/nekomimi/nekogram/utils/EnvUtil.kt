@@ -3,13 +3,18 @@ package tw.nekomimi.nekogram.utils
 import android.content.Context
 import android.os.Build
 import android.os.Environment
+import android.os.FileObserver
+import android.os.Process
 import android.os.storage.StorageManager
 import android.provider.MediaStore
+import android.system.Os
 import org.telegram.messenger.AndroidUtilities
 import org.telegram.messenger.ApplicationLoader
+import org.telegram.messenger.FileLoader
 import org.telegram.messenger.FileLog
 import tw.nekomimi.nekogram.NekoConfig
 import java.io.File
+import java.io.FileInputStream
 import java.util.*
 
 object EnvUtil {
@@ -107,6 +112,121 @@ object EnvUtil {
     private var publicLeftoversCleaned = false
 
     private const val PROBE_MAX_ENTRIES = 300
+
+    @Volatile
+    private var documentsWatcher: FileObserver? = null
+
+    /**
+     * 在 Documents 上挂 inotify 观察者，文件一落地就把现场写进日志。
+     *
+     * 只记录，不删文件、不改任何路径。每条事件带 st_uid 和反查出来的包名，
+     * 这是唯一能回答"这些 dcId_docId 到底是谁写的"的证据：
+     * 包名是本应用说明本进程（或同 uid 的旧进程）写的，是别家包名就直接定案。
+     */
+    private fun startDocumentsWatcher(docs: File) {
+        if (documentsWatcher != null) return
+        if (!docs.isDirectory) {
+            FileLog.d("DocumentsWatch: skip, ${docs.absolutePath} is not a directory")
+            return
+        }
+        try {
+            val mask = FileObserver.CREATE or FileObserver.CLOSE_WRITE or FileObserver.MOVED_TO or
+                    FileObserver.MOVED_FROM or FileObserver.DELETE or FileObserver.ATTRIB
+            val watcher = object : FileObserver(docs.absolutePath, mask) {
+                override fun onEvent(event: Int, path: String?) {
+                    recordDocumentsEvent(docs, event, path ?: return)
+                }
+            }
+            watcher.startWatching()
+            documentsWatcher = watcher
+            FileLog.d(
+                "DocumentsWatch: start dir=${docs.absolutePath} myUid=${Process.myUid()} myPid=${Process.myPid()}" +
+                        " pkg=${ApplicationLoader.applicationContext.packageName}" +
+                        " cachePath=${NekoConfig.cachePath.String()}" +
+                        " cacheDir=${AndroidUtilities.getCacheDir()}" +
+                        " mediaCache=${FileLoader.getDirectory(FileLoader.MEDIA_DIR_CACHE)}"
+            )
+        } catch (t: Throwable) {
+            FileLog.d("DocumentsWatch: start failed $t")
+        }
+    }
+
+    /** 把一次 inotify 事件展开成可判断的字段。 */
+    private fun recordDocumentsEvent(docs: File, event: Int, path: String) {
+        try {
+            val isDir = (event and FileObserver.ISDIR) != 0
+            val sb = StringBuilder("DocumentsWatch: ")
+                .append(fileObserverEventName(event))
+                .append(" path=").append(path)
+                .append(" isDir=").append(isDir)
+            val file = File(docs, path)
+            try {
+                val st = Os.stat(file.absolutePath)
+                val uid = st.st_uid
+                val pkg = try {
+                    ApplicationLoader.applicationContext.packageManager
+                        .getPackagesForUid(uid)?.joinToString(",") ?: "unknown"
+                } catch (_: Throwable) {
+                    "unknown"
+                }
+                sb.append(" size=").append(st.st_size)
+                    .append(" mtime=").append(st.st_mtime)
+                    .append(" uid=").append(uid)
+                    .append(" pkg=").append(pkg)
+                    .append(" mode=").append(Integer.toOctalString(st.st_mode))
+                if (!isDir && st.st_size in 1L..4096L) {
+                    sb.append(" hls=").append(sniffHls(file))
+                }
+            } catch (t: Throwable) {
+                sb.append(" stat=").append(t.javaClass.simpleName)
+            }
+            sb.append(" byPid=").append(Process.myPid())
+            FileLog.d(sb.toString())
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun fileObserverEventName(event: Int): String = when (event and FileObserver.ALL_EVENTS) {
+        FileObserver.CREATE -> "CREATE"
+        FileObserver.CLOSE_WRITE -> "CLOSE_WRITE"
+        FileObserver.MOVED_TO -> "MOVED_TO"
+        FileObserver.MOVED_FROM -> "MOVED_FROM"
+        FileObserver.DELETE -> "DELETE"
+        FileObserver.ATTRIB -> "ATTRIB"
+        FileObserver.MODIFY -> "MODIFY"
+        FileObserver.OPEN -> "OPEN"
+        else -> "EVENT_" + (event and FileObserver.ALL_EVENTS)
+    }
+
+    /**
+     * HLS manifest 首行固定是 #EXTM3U，正文里的 mtproto:NNN 指向真正的视频文档。
+     * 返回 yes:NNN 就能和文件名里的 docId 对上，确认是哪个视频的播放列表。
+     */
+    private fun sniffHls(file: File): String {
+        return try {
+            val bytes = ByteArray(1024)
+            val read = FileInputStream(file).use { it.read(bytes) }
+            if (read <= 0) {
+                "empty"
+            } else {
+                val head = String(bytes, 0, read)
+                if (!head.startsWith("#EXTM3U")) {
+                    "no"
+                } else {
+                    val idx = head.indexOf("mtproto:")
+                    if (idx < 0) {
+                        "yes"
+                    } else {
+                        var end = idx + 8
+                        while (end < head.length && head[end].isDigit()) end++
+                        "yes:" + head.substring(idx + 8, end)
+                    }
+                }
+            }
+        } catch (_: Throwable) {
+            "readfail"
+        }
+    }
 
     /**
      * 把公共 Documents 目录里的内容记进应用日志。
@@ -213,6 +333,7 @@ object EnvUtil {
             try {
                 val docs = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
                 probePublicDocuments(docs)
+                startDocumentsWatcher(docs)
                 cleanupLegacyCache(docs)
                 for (name in arrayOf("Nagram", "Telegram")) {
                     val dir = File(docs, name)
