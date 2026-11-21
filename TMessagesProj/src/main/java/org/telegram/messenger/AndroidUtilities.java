@@ -2736,15 +2736,21 @@ public class AndroidUtilities {
     }
 
     public static File getCacheDir() {
+        File file = null;
         try {
-            // 对齐官方：MEDIA_DIR_CACHE 就是 telegramPath 本身，不再多包一层 caches
-            File file = EnvUtil.getTelegramPath();
-            FileUtil.initDir(file);
-            return file;
+            // 对齐官方：缓存根固定是 Android/data/<pkg>/cache，媒体放在 files/Telegram
+            File[] dirs = ApplicationLoader.applicationContext.getExternalCacheDirs();
+            if (dirs != null && dirs.length > 0) {
+                file = dirs[0];
+            }
         } catch (Throwable e) {
             FileLog.e(e);
         }
-        return new File(ApplicationLoader.getDataDirFixed(), "cache/media/caches");
+        if (file == null) {
+            file = ApplicationLoader.getCacheDirFixed();
+        }
+        FileUtil.initDir(file);
+        return file;
     }
 
     public static int dp(float value) {
