@@ -2429,6 +2429,26 @@ public class ImageLoader {
         try {
             telegramPath = EnvUtil.getTelegramPath();
 
+            File legacyCachesDir = new File(telegramPath, "caches");
+            if (!legacyCachesDir.equals(cachePath) && legacyCachesDir.isDirectory()) {
+                try {
+                    File[] legacyFiles = legacyCachesDir.listFiles();
+                    if (legacyFiles != null) {
+                        for (File legacyFile : legacyFiles) {
+                            if (legacyFile.isFile()) {
+                                legacyFile.delete();
+                            }
+                        }
+                    }
+                    legacyCachesDir.delete();
+                    if (BuildVars.LOGS_ENABLED) {
+                        FileLog.d("removed legacy caches dir = " + legacyCachesDir);
+                    }
+                } catch (Exception e) {
+                    FileLog.e(e);
+                }
+            }
+
             if (telegramPath.isDirectory()) {
                 try {
                     File imagePath = new File(telegramPath, "images");
@@ -2480,6 +2500,20 @@ public class ImageLoader {
                         mediaDirs.put(FileLoader.MEDIA_DIR_DOCUMENT, documentPath);
                         if (BuildVars.LOGS_ENABLED) {
                             FileLog.d("documents path = " + documentPath);
+                        }
+                    }
+                } catch (Exception e) {
+                    FileLog.e(e);
+                }
+
+                try {
+                    File filesPath = new File(telegramPath, "files");
+                    FileUtil.initDir(filesPath);
+                    if (filesPath.isDirectory() && canMoveFiles(cachePath, filesPath, FileLoader.MEDIA_DIR_FILES)) {
+                        AndroidUtilities.createEmptyFile(new File(filesPath, ".nomedia"));
+                        mediaDirs.put(FileLoader.MEDIA_DIR_FILES, filesPath);
+                        if (BuildVars.LOGS_ENABLED) {
+                            FileLog.d("files path = " + filesPath);
                         }
                     }
                 } catch (Exception e) {

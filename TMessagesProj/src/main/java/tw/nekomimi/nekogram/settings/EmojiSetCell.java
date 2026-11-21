@@ -176,11 +176,12 @@ public class EmojiSetCell extends FrameLayout {
                     break;
                 }
             }
-            if (strippedThumb != null) {
-                imageView.setImage(ImageLocation.getForDocument(document), "146_146", strippedThumb, pack);
+            TLRPC.PhotoSize thumb = FileLoader.getClosestPhotoSizeWithSize(document.thumbs, 146);
+            if (thumb != null && thumb.size > 0) {
+                // 只拉缩略图：预览只需 146px，没必要把整张 document 缓存到 cache/documents
+                imageView.setImage(ImageLocation.getForDocument(thumb, document), "146_146", strippedThumb, pack);
             } else {
-                TLRPC.PhotoSize thumb = FileLoader.getClosestPhotoSizeWithSize(document.thumbs, 146);
-                imageView.setImage(ImageLocation.getForDocument(document), "146_146", ImageLocation.getForDocument(thumb, document), "146_146_B", thumb.size, pack);
+                imageView.setImage(ImageLocation.getForDocument(document), "146_146", strippedThumb, pack);
             }
         } else {
             imageView.setImage(pack.getPreview(), null, null);
