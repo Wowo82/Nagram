@@ -2487,6 +2487,20 @@ public class ImageLoader {
                 }
 
                 try {
+                    File filesPath = new File(telegramPath, "files");
+                    FileUtil.initDir(filesPath);
+                    if (filesPath.isDirectory() && canMoveFiles(cachePath, filesPath, FileLoader.MEDIA_DIR_FILES)) {
+                        AndroidUtilities.createEmptyFile(new File(filesPath, ".nomedia"));
+                        mediaDirs.put(FileLoader.MEDIA_DIR_FILES, filesPath);
+                        if (BuildVars.LOGS_ENABLED) {
+                            FileLog.d("files path = " + filesPath);
+                        }
+                    }
+                } catch (Exception e) {
+                    FileLog.e(e);
+                }
+
+                try {
                     File storyPath = new File(telegramPath, "stories");
                     FileUtil.initDir(storyPath);
                     if (storyPath.isDirectory() && canMoveFiles(cachePath, storyPath, FileLoader.MEDIA_DIR_STORIES)) {

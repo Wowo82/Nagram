@@ -982,7 +982,7 @@ public class FileLoader extends BaseController {
                         }
                     } else if (!TextUtils.isEmpty(getDocumentFileName(document)) && canSaveAsFile(parentObject)) {
                         storeFileName = getDocumentFileName(document);
-                        File newDir = getDirectory(MEDIA_DIR_DOCUMENT);
+                        File newDir = getDirectory(MEDIA_DIR_FILES);
                         if (newDir != null) {
                             storeDir = newDir;
                             saveCustomPath = true;
