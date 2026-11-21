@@ -2429,6 +2429,26 @@ public class ImageLoader {
         try {
             telegramPath = EnvUtil.getTelegramPath();
 
+            File legacyCachesDir = new File(telegramPath, "caches");
+            if (!legacyCachesDir.equals(cachePath) && legacyCachesDir.isDirectory()) {
+                try {
+                    File[] legacyFiles = legacyCachesDir.listFiles();
+                    if (legacyFiles != null) {
+                        for (File legacyFile : legacyFiles) {
+                            if (legacyFile.isFile()) {
+                                legacyFile.delete();
+                            }
+                        }
+                    }
+                    legacyCachesDir.delete();
+                    if (BuildVars.LOGS_ENABLED) {
+                        FileLog.d("removed legacy caches dir = " + legacyCachesDir);
+                    }
+                } catch (Exception e) {
+                    FileLog.e(e);
+                }
+            }
+
             if (telegramPath.isDirectory()) {
                 try {
                     File imagePath = new File(telegramPath, "images");

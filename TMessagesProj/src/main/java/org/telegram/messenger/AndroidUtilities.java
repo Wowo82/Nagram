@@ -2737,7 +2737,8 @@ public class AndroidUtilities {
 
     public static File getCacheDir() {
         try {
-            File file = new File(EnvUtil.getTelegramPath(), "caches");
+            // 对齐官方：MEDIA_DIR_CACHE 就是 telegramPath 本身，不再多包一层 caches
+            File file = EnvUtil.getTelegramPath();
             FileUtil.initDir(file);
             return file;
         } catch (Throwable e) {
