@@ -1,141 +1,34 @@
 package tw.nekomimi.nekogram.utils
 
-import android.content.Context
 import android.os.Build
-import android.os.Environment
-import android.os.storage.StorageManager
 import org.telegram.messenger.AndroidUtilities
 import org.telegram.messenger.ApplicationLoader
-import tw.nekomimi.nekogram.NekoConfig
 import java.io.File
-import java.util.*
 
 object EnvUtil {
 
-    @JvmStatic
-    @Suppress("UNCHECKED_CAST")
-    val rootDirectories: List<File> by lazy {
-
-        try {
-            val mStorageManager = ApplicationLoader.applicationContext.getSystemService(Context.STORAGE_SERVICE) as StorageManager
-            (mStorageManager.javaClass.getMethod("getVolumePaths").invoke(mStorageManager) as Array<String>).map { File(it) }
-        } catch (_:  Throwable) {
-            AndroidUtilities.getRootDirs()
-        }
-
-    }
-
-    @JvmStatic
-    val availableDirectories
-        get() = LinkedList<File>().apply {
-
-            add(File(ApplicationLoader.getDataDirFixed(), "files/media"))
-            add(File(ApplicationLoader.getDataDirFixed(), "cache/media"))
-
-            rootDirectories.forEach {
-
-                add(File(it, "Android/data/" + ApplicationLoader.applicationContext.packageName + "/files"))
-                add(File(it, "Android/data/" + ApplicationLoader.applicationContext.packageName + "/cache"))
-
-            }
-
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-                add(Environment.getExternalStoragePublicDirectory("Nagram"))
-            }
-
-        }.map { it.path }.toTypedArray()
-
     /**
-     * 公共存储里不允许作为缓存根目录的名字。
+     * 媒体根目录，固定为 <外部私有目录>/files/Telegram。
      *
-     * 历史版本/迁移数据可能把 cachePath 设成 Documents、Download 之类的公共目录，
-     * 结果缩略图、m3u8 播放列表、视频分片会散落在用户的文件管理器里。
-     * 这里做一次兜底：命中即强制回到应用专属的外部目录。
+     * 与官方一致：cache 只放可再生缓存（缩略图、视频分片、m3u8 清单），
+     * 图片/视频/文档/语音等按分类放在 files/Telegram 下。
+     * 不再提供“存储位置”切换，避免把分类目录写进 cache 或 /data/data。
      */
-    private val blockedCacheRoots = arrayOf(
-        "Documents", "Download", "Downloads", "Pictures", "DCIM", "Music", "Movies", "Telegram", "Nagram"
-    )
-
-    private fun isPublicCacheRoot(dir: File): Boolean {
-        val path = dir.absolutePath.trimEnd('/')
-        if (path.isEmpty()) return false
-        // 已经是应用专属目录，放行
-        if (path.contains("/Android/data/") || path.contains("/Android/media/")) return false
-        for (root in rootDirectories) {
-            val rootPath = root.absolutePath.trimEnd('/')
-            if (path == rootPath) return true
-            for (name in blockedCacheRoots) {
-                if (path == "$rootPath/$name" || path.startsWith("$rootPath/$name/")) {
-                    return true
-                }
-            }
-        }
-        return false
-    }
-
-    /** Telegram 缓存文件名：dcId_documentId[.ext] */
-    private val legacyCacheName = Regex("^\\d+_\\d+(\\.[A-Za-z0-9]+)?$")
-
-    /**
-     * 清理旧版本落在公共目录里的缓存文件。
-     *
-     * 只删除严格符合 Telegram 缓存命名（dcId_documentId）以及 m3u8 / ts / part 后缀的文件，
-     * 不会碰用户自己的文档。
-     */
-    private fun cleanupLegacyCache(dir: File) {
-        try {
-            val files = dir.listFiles() ?: return
-            for (file in files) {
-                if (file == null || file.isDirectory) continue
-                val name = file.name
-                if (legacyCacheName.matches(name) || name.endsWith(".m3u8")
-                    || name.endsWith(".ts") || name.endsWith(".part")
-                ) {
-                    try {
-                        file.delete()
-                    } catch (_: Throwable) {
-                    }
-                }
-            }
-        } catch (_: Throwable) {
-        }
-    }
-
-    // This is the only media path of NekoX, don't use other!
     @JvmStatic
     fun getTelegramPath(): File {
-
-        if (NekoConfig.cachePath.String() == "") {
-            // https://github.com/NekoX-Dev/NekoX/issues/284
-            NekoConfig.cachePath.setConfigString(availableDirectories[2])
-        } else if (isPublicCacheRoot(File(NekoConfig.cachePath.String()))) {
-            // 缓存不能落到公共目录，清掉遗留缓存并切回应用专属目录
-            cleanupLegacyCache(File(NekoConfig.cachePath.String()))
-            NekoConfig.cachePath.setConfigString(availableDirectories[2])
+        var base = ApplicationLoader.applicationContext.getExternalFilesDir(null)
+        if (base == null) {
+            base = ApplicationLoader.getFilesDirFixed()
         }
-        var telegramPath = File(NekoConfig.cachePath.String())
-        if (telegramPath.isDirectory || telegramPath.mkdirs()) {
-            return telegramPath
-        } else {
-            NekoConfig.cachePath.setConfigString(availableDirectories[2])
+        var telegramPath = File(base, "Telegram")
+        if (!telegramPath.isDirectory && !telegramPath.mkdirs()) {
+            base = ApplicationLoader.getFilesDirFixed()
+            telegramPath = File(base, "Telegram")
+            if (!telegramPath.isDirectory) {
+                telegramPath.mkdirs()
+            }
         }
-
-        // fallback
-
-        telegramPath = ApplicationLoader.applicationContext.getExternalFilesDir(null) ?: File(availableDirectories[1])
-
-        if (telegramPath.isDirectory || telegramPath.mkdirs()) {
-
-            return telegramPath
-
-        }
-
-        telegramPath = File(availableDirectories[1])
-
-        if (!telegramPath.isDirectory) telegramPath.mkdirs()
-
         return telegramPath
-
     }
 
     @JvmStatic
@@ -144,6 +37,6 @@ object EnvUtil {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             return getTelegramPath()
         }
-        return File(availableDirectories[3])
+        return AndroidUtilities.getCacheDir()
     }
 }

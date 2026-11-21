@@ -2429,8 +2429,22 @@ public class ImageLoader {
         try {
             telegramPath = EnvUtil.getTelegramPath();
 
-            File legacyCachesDir = new File(telegramPath, "caches");
-            if (!legacyCachesDir.equals(cachePath) && legacyCachesDir.isDirectory()) {
+            // 官方的分类目录在 <外部私有目录>/files/Telegram 下。
+            // 旧版本直接建在 files 或 cache 根，这里一次性搬进 Telegram 目录。
+            File mediaBase = telegramPath.getParentFile();
+            File cacheBase = mediaBase == null ? null : new File(mediaBase.getParentFile(), "cache");
+            migrateLegacyMediaDirs(mediaBase, telegramPath);
+            migrateLegacyMediaDirs(cacheBase, telegramPath);
+
+            File[] legacyCachesDirs = new File[]{
+                    new File(telegramPath, "caches"),
+                    mediaBase == null ? null : new File(mediaBase, "caches"),
+                    cacheBase == null ? null : new File(cacheBase, "caches")
+            };
+            for (File legacyCachesDir : legacyCachesDirs) {
+                if (legacyCachesDir == null || legacyCachesDir.equals(cachePath) || !legacyCachesDir.isDirectory()) {
+                    continue;
+                }
                 try {
                     File[] legacyFiles = legacyCachesDir.listFiles();
                     if (legacyFiles != null) {
@@ -2451,7 +2465,7 @@ public class ImageLoader {
 
             if (telegramPath.isDirectory()) {
                 try {
-                    File imagePath = new File(telegramPath, "images");
+                    File imagePath = new File(telegramPath, "Telegram Images");
                     FileUtil.initDir(imagePath);
                     if (imagePath.isDirectory() && canMoveFiles(cachePath, imagePath, FileLoader.MEDIA_DIR_IMAGE)) {
                         AndroidUtilities.createEmptyFile(new File(imagePath, ".nomedia"));
@@ -2465,7 +2479,7 @@ public class ImageLoader {
                 }
 
                 try {
-                    File videoPath = new File(telegramPath, "videos");
+                    File videoPath = new File(telegramPath, "Telegram Video");
                     FileUtil.initDir(videoPath);
                     if (videoPath.isDirectory() && canMoveFiles(cachePath, videoPath, FileLoader.MEDIA_DIR_VIDEO)) {
                         AndroidUtilities.createEmptyFile(new File(videoPath, ".nomedia"));
@@ -2479,7 +2493,7 @@ public class ImageLoader {
                 }
 
                 try {
-                    File audioPath = new File(telegramPath, "audios");
+                    File audioPath = new File(telegramPath, "Telegram Audio");
                     FileUtil.initDir(audioPath);
                     if (audioPath.isDirectory() && canMoveFiles(cachePath, audioPath, FileLoader.MEDIA_DIR_AUDIO)) {
                         AndroidUtilities.createEmptyFile(new File(audioPath, ".nomedia"));
@@ -2493,7 +2507,7 @@ public class ImageLoader {
                 }
 
                 try {
-                    File documentPath = new File(telegramPath, "documents");
+                    File documentPath = new File(telegramPath, "Telegram Documents");
                     FileUtil.initDir(documentPath);
                     if (documentPath.isDirectory() && canMoveFiles(cachePath, documentPath, FileLoader.MEDIA_DIR_DOCUMENT)) {
                         AndroidUtilities.createEmptyFile(new File(documentPath, ".nomedia"));
@@ -2507,7 +2521,7 @@ public class ImageLoader {
                 }
 
                 try {
-                    File filesPath = new File(telegramPath, "files");
+                    File filesPath = new File(telegramPath, "Telegram Files");
                     FileUtil.initDir(filesPath);
                     if (filesPath.isDirectory() && canMoveFiles(cachePath, filesPath, FileLoader.MEDIA_DIR_FILES)) {
                         AndroidUtilities.createEmptyFile(new File(filesPath, ".nomedia"));
@@ -2521,7 +2535,7 @@ public class ImageLoader {
                 }
 
                 try {
-                    File storyPath = new File(telegramPath, "stories");
+                    File storyPath = new File(telegramPath, "Telegram Stories");
                     FileUtil.initDir(storyPath);
                     if (storyPath.isDirectory() && canMoveFiles(cachePath, storyPath, FileLoader.MEDIA_DIR_STORIES)) {
                         AndroidUtilities.createEmptyFile(new File(storyPath, ".nomedia"));
@@ -2540,6 +2554,65 @@ public class ImageLoader {
         }
 
         return mediaDirs;
+    }
+
+    private void migrateMediaDir(File from, File to) {
+        if (from == null || to == null || !from.isDirectory()) {
+            return;
+        }
+        if (from.getAbsolutePath().equals(to.getAbsolutePath())) {
+            return;
+        }
+        try {
+            File[] files = from.listFiles();
+            if (files == null || files.length == 0) {
+                from.delete();
+                return;
+            }
+            FileUtil.initDir(to);
+            for (File file : files) {
+                if (file == null || file.isDirectory()) {
+                    continue;
+                }
+                File dest = new File(to, file.getName());
+                if (dest.exists()) {
+                    file.delete();
+                    continue;
+                }
+                boolean moved = false;
+                try {
+                    moved = file.renameTo(dest);
+                } catch (Exception ignore) {
+                }
+                if (!moved) {
+                    try {
+                        moved = AndroidUtilities.copyFile(file, dest);
+                    } catch (Exception e) {
+                        FileLog.e(e);
+                    }
+                    if (moved) {
+                        file.delete();
+                    }
+                }
+            }
+            from.delete();
+            if (BuildVars.LOGS_ENABLED) {
+                FileLog.d("migrated media dir " + from + " -> " + to);
+            }
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+    }
+
+    private void migrateLegacyMediaDirs(File legacyBase, File telegramPath) {
+        if (legacyBase == null) {
+            return;
+        }
+        String[] oldNames = {"images", "videos", "audios", "documents", "files", "stories"};
+        String[] newNames = {"Telegram Images", "Telegram Video", "Telegram Audio", "Telegram Documents", "Telegram Files", "Telegram Stories"};
+        for (int a = 0; a < oldNames.length; a++) {
+            migrateMediaDir(new File(legacyBase, oldNames[a]), new File(telegramPath, newNames[a]));
+        }
     }
 
     @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
