@@ -284,10 +284,6 @@ public class MessageObject {
     public boolean isSpoilersRevealed = NekoConfig.showSpoilersDirectly.Bool();
     /** 消息过滤动作，-1 表示未计算。见 MessageFilterRules.ACTION_*。 */
     public int filterAction = -1;
-    /** 计算 filterAction 时的规则代际。规则一变，旧结果自动作废。 */
-    private int filterActionGeneration = -1;
-    /** 本次动作是否由「关键词过滤器」造成（而非过滤规则），探针用来区分来源。 */
-    private boolean filterHitByMessageFilter;
     /** 规则命中「遮罩」时注入的 spoiler entity，用于撤销。 */
     public TLRPC.MessageEntity filterSpoilerEntity;
     /** 折叠占位是否已应用，保证重算幂等。 */
@@ -2131,7 +2127,6 @@ public class MessageObject {
         updateMessageText(users, chats, sUsers, sChats);
         // 消息过滤器 / 过滤规则：在 setType 前应用「遮罩」「折叠」，隐藏由渲染层跳过
         filterAction = -1;
-        filterActionGeneration = -1;
         final int __filterAct = getFilterAction();
         if (__filterAct == MessageFilterRules.ACTION_SPOILER
                 && filterSpoilerEntity == null && !isRestrictedMessage) {
@@ -4915,8 +4910,7 @@ public class MessageObject {
      * 首次调用计算并缓存；规则变化后由 {@link #reapplyFilterAction()} 重置。
      */
     public int getFilterAction() {
-        final int gen = MessageFilterRules.generation();
-        if (filterAction != -1 && filterActionGeneration == gen) {
+        if (filterAction != -1) {
             return filterAction;
         }
         int result = MessageFilterRules.ACTION_NONE;
@@ -4925,7 +4919,6 @@ public class MessageObject {
         final CharSequence filterMessageText = filterProbeText();
         final CharSequence filterText = filterProbeCaption();
         final String fileName = filterProbeFileName();
-        final String richExtra = filterProbeRichExtra();
         final long senderId = getSenderId();
         final long viaBotId = messageOwner != null ? messageOwner.via_bot_id : 0L;
         // 本仓库的 TLRPC.Message 没有 via_bot_name 字段，按 id 匹配即可
@@ -4942,23 +4935,24 @@ public class MessageObject {
             // 带 caption 的媒体消息 messageText 就是 caption，文件名不在里面；
             // 单独取出来作为额外匹配串，否则按 .apk / .zip 这类后缀过滤会漏。
             // 只对 document 取（照片没有用户可见文件名，且 photo 字段可能为空）
-            final int fromRules = MessageFilterRules.match(filterMessageText, filterText, fileName, richExtra, senderId, viaBotId, viaBotName);
+            final int fromRules = MessageFilterRules.match(filterMessageText, filterText, fileName, senderId, viaBotId, viaBotName);
             if (fromRules > result) {
                 result = fromRules;
             }
         }
         filterAction = result;
-        filterActionGeneration = gen;
-        filterHitByMessageFilter = byMessageFilter;
+        // 探针：命中就留痕，日志里能直接看到是哪条规则、依据哪段文本命中的
+        if (result != MessageFilterRules.ACTION_NONE) {
+            MessageFilterRules.logHit(getId(), filterMessageText, filterText, fileName, senderId, viaBotId, viaBotName, result, byMessageFilter);
+        }
         return result;
     }
 
     /**
      * 探针：输出本条消息的过滤判定详情，无论命中与否。
      *
-     * <p>只由聊天页的批次统计调用，不在构造期自动输出——会话列表的最后一条消息预览
-     * 也会构造 MessageObject 并计算动作，若在那里打日志会制造大量与界面无关的 HIT，
-     * 让人误判「规则命中了很多消息」。</p>
+     * <p>供批次汇总在「有规则但整批零命中」时采样调用，用来回答
+     * 「为什么这条没被过滤」——是文本不在匹配串、还是规则压根没加载。</p>
      */
     public void dumpFilterProbe() {
         if (!MessageFilterRules.probeEnabled()) {
@@ -4967,16 +4961,12 @@ public class MessageObject {
         final CharSequence filterMessageText = filterProbeText();
         final CharSequence filterText = filterProbeCaption();
         final String fileName = filterProbeFileName();
-        final String richExtra = filterProbeRichExtra();
         final long viaBotId = messageOwner != null ? messageOwner.via_bot_id : 0L;
         final int act = getFilterAction();
         if (act != MessageFilterRules.ACTION_NONE) {
-            MessageFilterRules.logHit(getId(), filterMessageText, filterText, fileName, richExtra,
-                    getSenderId(), viaBotId, null, act, filterHitByMessageFilter);
-        } else {
-            MessageFilterRules.logMiss(getId(), filterMessageText, filterText, fileName, richExtra,
-                    getSenderId(), viaBotId, null);
+            return; // 命中的已经在 getFilterAction 里打过，避免重复
         }
+        MessageFilterRules.logMiss(getId(), filterMessageText, filterText, fileName, getSenderId(), viaBotId, null);
     }
 
     /** 规则匹配用的正文：优先服务端原文，避免 messageText 的字符改写导致漏匹配。 */
@@ -4998,53 +4988,10 @@ public class MessageObject {
         return getDocument() != null ? getFileName() : null;
     }
 
-    /**
-     * 规则匹配用的附加串：inline 按钮文字 + 网页预览标题/描述。
-     *
-     * <p>很多频道广告的正文只有一两句，真正的引导语在按钮上（「点击进入官网」
-     * 「立即下载 App」），或者只出现在链接预览卡片的标题里。只匹配正文会让这类
-     * 广告整条漏过，表现为「同一个频道，有的广告能拦、有的拦不住」。</p>
-     */
-    private String filterProbeRichExtra() {
-        if (messageOwner == null) {
-            return null;
-        }
-        StringBuilder sb = new StringBuilder();
-        final TLRPC.ReplyMarkup markup = messageOwner.reply_markup;
-        if (markup instanceof TLRPC.TL_replyInlineMarkup) {
-            final TLRPC.TL_replyInlineMarkup inline = (TLRPC.TL_replyInlineMarkup) markup;
-            if (inline.rows != null) {
-                for (int i = 0, N = inline.rows.size(); i < N; i++) {
-                    final ArrayList<TL_keyboard.KeyboardInlineButton> row = inline.rows.get(i).buttons;
-                    if (row == null) continue;
-                    for (int j = 0, M = row.size(); j < M; j++) {
-                        final TL_keyboard.KeyboardInlineButton button = row.get(j);
-                        if (button == null || TextUtils.isEmpty(button.text)) continue;
-                        sb.append(button.text).append('\n');
-                    }
-                }
-            }
-        }
-        if (messageOwner.media != null && messageOwner.media.webpage != null) {
-            final TLRPC.WebPage page = messageOwner.media.webpage;
-            appendFilterExtra(sb, page.title);
-            appendFilterExtra(sb, page.description);
-            appendFilterExtra(sb, page.site_name);
-        }
-        return sb.length() == 0 ? null : sb.toString();
-    }
-
-    private static void appendFilterExtra(StringBuilder sb, String value) {
-        if (!TextUtils.isEmpty(value)) {
-            sb.append(value).append('\n');
-        }
-    }
-
     /** 规则变化后重算并就地应用动作。 */
     public void reapplyFilterAction() {
         final boolean hadModification = filterCollapsedApplied || filterSpoilerEntity != null;
         filterAction = -1;
-        filterActionGeneration = -1;
         final int act = getFilterAction();
         if (act == MessageFilterRules.ACTION_NONE && !hadModification) {
             // 绝大多数消息没有任何动作，跳过 generateLayout / setType 这些重活，
@@ -5064,9 +5011,6 @@ public class MessageObject {
             return false;
         }
         filterAction = act;
-        // 传播来的动作不是本条自己命中的，必须把代际一起写死，
-        // 否则下一次 getFilterAction 会按「本条规则没命中」重算，把组传播结果冲掉
-        filterActionGeneration = MessageFilterRules.generation();
         applyFilterActionNow();
         return true;
     }

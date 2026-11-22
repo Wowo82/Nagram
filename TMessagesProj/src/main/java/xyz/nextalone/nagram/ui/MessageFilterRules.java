@@ -57,15 +57,6 @@ public final class MessageFilterRules {
 
     private static volatile List<Compiled> cache;
 
-    /**
-     * 规则代际：每次规则变更自增。
-     *
-     * <p>MessageObject 会把判定结果缓存到实例上。规则改过之后，别的会话里早就构造好的
-     * 消息对象仍然带着旧结论（NONE），切回去看还是没过滤——表现为「部分频道规则不生效」，
-     * 而且只能靠重启进程恢复。带上代际后，任何旧缓存都会在下次判定时自动作废。</p>
-     */
-    private static volatile int generation;
-
     private MessageFilterRules() {
     }
 
@@ -189,12 +180,6 @@ public final class MessageFilterRules {
 
     public static void invalidateCache() {
         cache = null;
-        generation++;
-    }
-
-    /** 当前规则代际，用于让消息上缓存的过滤结果自动失效。 */
-    public static int generation() {
-        return generation;
     }
 
     private static List<Compiled> compiled() {
@@ -255,13 +240,12 @@ public final class MessageFilterRules {
      * <p>媒体消息带 caption 时，{@code messageText} 只剩说明文字，文件名完全不参与匹配，
      * 表现为「按文件名后缀过滤时灵时不灵」。调用方把文件名单独传进来即可。</p>
      */
-    public static int match(CharSequence text, CharSequence caption, CharSequence extra, CharSequence extra2,
-                            long senderId, long viaBotId, String viaBotName) {
+    public static int match(CharSequence text, CharSequence caption, CharSequence extra, long senderId, long viaBotId, String viaBotName) {
         List<Compiled> rules = compiled();
         if (rules.isEmpty()) return ACTION_NONE;
         int best = ACTION_NONE;
         for (Compiled c : rules) {
-            if (matchesRule(c, text, caption, extra, extra2, senderId, viaBotId, viaBotName) && c.rule.action > best) {
+            if (matchesRule(c, text, caption, extra, senderId, viaBotId, viaBotName) && c.rule.action > best) {
                 best = c.rule.action;
             }
             if (best == ACTION_HIDE) {
@@ -276,11 +260,8 @@ public final class MessageFilterRules {
      *
      * <p>从 {@link #match} 里抽出来，让探针能复用完全相同的逻辑，
      * 避免「日志显示命中、实际没生效」这种因两份实现漂移导致的误判。</p>
-     *
-     * @param extra  附加匹配串（媒体文件名）
-     * @param extra2 附加匹配串（按钮文字、网页预览标题与描述）
      */
-    private static boolean matchesRule(Compiled c, CharSequence text, CharSequence caption, CharSequence extra, CharSequence extra2,
+    private static boolean matchesRule(Compiled c, CharSequence text, CharSequence caption, CharSequence extra,
                                        long senderId, long viaBotId, String viaBotName) {
         switch (c.rule.matchType) {
             case MATCH_REGEX: {
@@ -288,16 +269,14 @@ public final class MessageFilterRules {
                 if (p == null) return false;
                 return (text != null && p.matcher(text).find())
                         || (caption != null && p.matcher(caption).find())
-                        || (extra != null && p.matcher(extra).find())
-                        || (extra2 != null && p.matcher(extra2).find());
+                        || (extra != null && p.matcher(extra).find());
             }
             case MATCH_CONTAINS: {
                 String needle = c.rule.matchValue;
                 boolean ci = c.rule.caseInsensitive;
                 return containsText(text, needle, ci)
                         || containsText(caption, needle, ci)
-                        || containsText(extra, needle, ci)
-                        || containsText(extra2, needle, ci);
+                        || containsText(extra, needle, ci);
             }
             case MATCH_SENDER_ID: {
                 long target = parseLong(c.rule.matchValue, Long.MIN_VALUE);
@@ -405,8 +384,6 @@ public final class MessageFilterRules {
                 sb.append(" [匹配值为空，跳过]");
             } else if (r.matchType == MATCH_REGEX && compileSafe(r.matchValue, r.caseInsensitive) == null) {
                 sb.append(" [正则编译失败，跳过]");
-            } else if (r.matchType == MATCH_CONTAINS && looksLikeRegex(r.matchValue)) {
-                sb.append(" [类型存成了「包含文本」但内容是正则，这条永远命中不了]");
             }
             FileLog.d(sb.toString());
         }
@@ -416,23 +393,23 @@ public final class MessageFilterRules {
     }
 
     /** 探针：一条消息命中了规则。 */
-    public static void logHit(int msgId, CharSequence text, CharSequence caption, CharSequence extra, CharSequence extra2,
+    public static void logHit(int msgId, CharSequence text, CharSequence caption, CharSequence extra,
                               long senderId, long viaBotId, String viaBotName, int act, boolean byMessageFilter) {
         if (!probeEnabled()) return;
         FileLog.d(PROBE_TAG + " HIT msg=" + msgId + " act=" + actionName(act)
                 + " src=" + (byMessageFilter ? "FILTER(关键词过滤器)" : "RULE(过滤规则)")
-                + " | " + describeMatch(text, caption, extra, extra2, senderId, viaBotId, viaBotName));
+                + " | " + describeMatch(text, caption, extra, senderId, viaBotId, viaBotName));
     }
 
     /** 探针：一条消息未命中任何规则，输出完整的输入与逐条判定，用于查「为什么没过滤」。 */
-    public static void logMiss(int msgId, CharSequence text, CharSequence caption, CharSequence extra, CharSequence extra2,
+    public static void logMiss(int msgId, CharSequence text, CharSequence caption, CharSequence extra,
                                long senderId, long viaBotId, String viaBotName) {
         if (!probeEnabled()) return;
         FileLog.d(PROBE_TAG + " MISS msg=" + msgId + " act=NONE | "
-                + describeMatch(text, caption, extra, extra2, senderId, viaBotId, viaBotName));
+                + describeMatch(text, caption, extra, senderId, viaBotId, viaBotName));
     }
 
-    private static String describeMatch(CharSequence text, CharSequence caption, CharSequence extra, CharSequence extra2,
+    private static String describeMatch(CharSequence text, CharSequence caption, CharSequence extra,
                                         long senderId, long viaBotId, String viaBotName) {
         List<Compiled> rules = compiled();
         StringBuilder sb = new StringBuilder("rules=").append(rules.size());
@@ -440,7 +417,7 @@ public final class MessageFilterRules {
         int best = ACTION_NONE;
         for (int i = 0; i < rules.size(); i++) {
             final Compiled c = rules.get(i);
-            final boolean hit = matchesRule(c, text, caption, extra, extra2, senderId, viaBotId, viaBotName);
+            final boolean hit = matchesRule(c, text, caption, extra, senderId, viaBotId, viaBotName);
             sb.append(" [").append(i).append(':').append(matchTypeName(c.rule.matchType))
                     .append('/').append(actionName(c.rule.action)).append(" \"")
                     .append(clip(c.rule.matchValue, 40)).append("\"→").append(hit ? "HIT" : "miss").append(']');
@@ -455,7 +432,6 @@ public final class MessageFilterRules {
         sb.append(" | text=").append(quote(text))
                 .append(" caption=").append(quote(caption))
                 .append(" file=").append(quote(extra))
-                .append(" rich=").append(quote(extra2))
                 .append(" sender=").append(senderId)
                 .append(" viaBot=").append(viaBotId);
         return sb.toString();
@@ -488,22 +464,6 @@ public final class MessageFilterRules {
             default:
                 return "UNKNOWN(" + type + ")";
         }
-    }
-
-    /**
-     * 判断一段文本看起来是不是正则表达式。
-     *
-     * <p>用于拦住一类静默失效：把整条正则粘进「包含文本」类型的规则里，它会被当成
-     * 普通字符串做 contains，永远不会命中，而界面上看不出任何异常。</p>
-     */
-    public static boolean looksLikeRegex(String value) {
-        if (TextUtils.isEmpty(value)) return false;
-        final String v = value.trim();
-        if (v.startsWith("(?") || v.startsWith("^") || v.endsWith("$")) return true;
-        if (v.contains("\\s") || v.contains("\\S") || v.contains("\\d") || v.contains("\\w")) return true;
-        if (v.contains("(?:") || v.contains("[\\s\\S]")) return true;
-        if (v.contains("{0,") || v.contains("{1,")) return true;
-        return false;
     }
 
     private static Pattern compileSafe(String regex, boolean caseInsensitive) {
