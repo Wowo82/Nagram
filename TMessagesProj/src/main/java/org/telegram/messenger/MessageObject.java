@@ -284,6 +284,8 @@ public class MessageObject {
     public boolean isSpoilersRevealed = NekoConfig.showSpoilersDirectly.Bool();
     /** 消息过滤动作，-1 表示未计算。见 MessageFilterRules.ACTION_*。 */
     public int filterAction = -1;
+    /** 本次动作是否由「关键词过滤器」造成（而非过滤规则），探针用来区分来源。 */
+    private boolean filterHitByMessageFilter;
     /** 规则命中「遮罩」时注入的 spoiler entity，用于撤销。 */
     public TLRPC.MessageEntity filterSpoilerEntity;
     /** 折叠占位是否已应用，保证重算幂等。 */
@@ -4941,18 +4943,16 @@ public class MessageObject {
             }
         }
         filterAction = result;
-        // 探针：命中就留痕，日志里能直接看到是哪条规则、依据哪段文本命中的
-        if (result != MessageFilterRules.ACTION_NONE) {
-            MessageFilterRules.logHit(getId(), filterMessageText, filterText, fileName, senderId, viaBotId, viaBotName, result, byMessageFilter);
-        }
+        filterHitByMessageFilter = byMessageFilter;
         return result;
     }
 
     /**
      * 探针：输出本条消息的过滤判定详情，无论命中与否。
      *
-     * <p>供批次汇总在「有规则但整批零命中」时采样调用，用来回答
-     * 「为什么这条没被过滤」——是文本不在匹配串、还是规则压根没加载。</p>
+     * <p>只由聊天页的批次统计调用，不在构造期自动输出——会话列表的最后一条消息预览
+     * 也会构造 MessageObject 并计算动作，若在那里打日志会制造大量与界面无关的 HIT，
+     * 让人误判「规则命中了很多消息」。</p>
      */
     public void dumpFilterProbe() {
         if (!MessageFilterRules.probeEnabled()) {
@@ -4964,9 +4964,12 @@ public class MessageObject {
         final long viaBotId = messageOwner != null ? messageOwner.via_bot_id : 0L;
         final int act = getFilterAction();
         if (act != MessageFilterRules.ACTION_NONE) {
-            return; // 命中的已经在 getFilterAction 里打过，避免重复
+            MessageFilterRules.logHit(getId(), filterMessageText, filterText, fileName,
+                    getSenderId(), viaBotId, null, act, filterHitByMessageFilter);
+        } else {
+            MessageFilterRules.logMiss(getId(), filterMessageText, filterText, fileName,
+                    getSenderId(), viaBotId, null);
         }
-        MessageFilterRules.logMiss(getId(), filterMessageText, filterText, fileName, getSenderId(), viaBotId, null);
     }
 
     /** 规则匹配用的正文：优先服务端原文，避免 messageText 的字符改写导致漏匹配。 */

@@ -28268,8 +28268,12 @@ public class ChatActivity extends BaseFragment implements
      * 探针：统计一批消息的过滤结果，并输出汇总。
      *
      * <p>回答「规则到底有没有作用到界面上」：total 是本批参与判断的消息数，
-     * hide / spoiler / collapse 是各动作的条数。整批零命中时再采样几条明细，
-     * 日志里就能直接看到这些消息的正文、文件名、发送者，便于判断是规则写错还是字段取错。</p>
+     * hide / spoiler / collapse 是各动作的条数。命中时抽几条打印是哪条规则命中，
+     * 整批零命中时则抽几条打印实际参与匹配的正文 / 文件名 / 发送者，
+     * 便于判断是规则写错、字段取错，还是规则压根没加载。</p>
+     *
+     * <p>只在聊天页的过滤批次里调用。会话列表的最后消息预览不经过这里，
+     * 因此不会出现「日志里一堆 HIT、界面上却没隐藏几条」的误导。</p>
      */
     private void logFilterProbeBatch(String scene, List<MessageObject> list) {
         if (!MessageFilterRules.probeEnabled()) {
@@ -28281,7 +28285,8 @@ public class ChatActivity extends BaseFragment implements
             return;
         }
         int total = 0, hide = 0, spoiler = 0, collapse = 0;
-        final ArrayList<MessageObject> samples = new ArrayList<>();
+        final ArrayList<MessageObject> hitSamples = new ArrayList<>();
+        final ArrayList<MessageObject> missSamples = new ArrayList<>();
         for (int a = 0, N = list.size(); a < N; a++) {
             final MessageObject object = list.get(a);
             if (object == null || object.getId() == 0 || object.isDateObject) {
@@ -28291,22 +28296,25 @@ public class ChatActivity extends BaseFragment implements
             final int act = object.getFilterAction();
             if (act == MessageFilterRules.ACTION_HIDE) {
                 hide++;
+                if (hitSamples.size() < 5) hitSamples.add(object);
             } else if (act == MessageFilterRules.ACTION_SPOILER) {
                 spoiler++;
+                if (hitSamples.size() < 5) hitSamples.add(object);
             } else if (act == MessageFilterRules.ACTION_COLLAPSE) {
                 collapse++;
-            } else if (samples.size() < 3 && object.messageOwner != null && object.messageOwner.message != null) {
-                samples.add(object);
+                if (hitSamples.size() < 5) hitSamples.add(object);
+            } else if (missSamples.size() < 3
+                    && object.messageOwner != null && object.messageOwner.message != null) {
+                missSamples.add(object);
             }
         }
         FileLog.d(MessageFilterRules.PROBE_TAG + " batch[" + scene + "] chat=" + dialog_id
                 + " total=" + total + " hide=" + hide + " spoiler=" + spoiler + " collapse=" + collapse
                 + " " + MessageFilterRules.rulesSummary());
-        // 整批零命中：采样几条，看看实际参与匹配的文本长什么样
-        if (hide + spoiler + collapse == 0) {
-            for (int a = 0, N = samples.size(); a < N; a++) {
-                samples.get(a).dumpFilterProbe();
-            }
+        // 有命中：抽最多 5 条说明命中了哪条规则；零命中：抽最多 3 条说明输入长什么样
+        final ArrayList<MessageObject> samples = hide + spoiler + collapse > 0 ? hitSamples : missSamples;
+        for (int a = 0, N = samples.size(); a < N; a++) {
+            samples.get(a).dumpFilterProbe();
         }
     }
 
