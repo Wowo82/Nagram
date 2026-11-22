@@ -58,6 +58,9 @@ import xyz.nextalone.nagram.ui.syntaxhighlight.SyntaxHighlight;
 import org.telegram.PhoneFormat.PhoneFormat;
 import org.telegram.messenger.browser.Browser;
 import org.telegram.messenger.ringtone.RingtoneDataStore;
+
+import xyz.nextalone.nagram.ui.MessageFilter;
+import xyz.nextalone.nagram.ui.MessageFilterRules;
 import org.telegram.messenger.utils.tlutils.AmountUtils;
 import org.telegram.messenger.utils.tlutils.TLKeyboardHelper;
 import org.telegram.messenger.utils.tlutils.TlUtils;
@@ -279,6 +282,14 @@ public class MessageObject {
     public boolean forceShowPollResults;
 
     public boolean isSpoilersRevealed = NekoConfig.showSpoilersDirectly.Bool();
+    /** 消息过滤动作，-1 表示未计算。见 MessageFilterRules.ACTION_*。 */
+    public int filterAction = -1;
+    /** 规则命中「遮罩」时注入的 spoiler entity，用于撤销。 */
+    public TLRPC.MessageEntity filterSpoilerEntity;
+    /** 折叠占位是否已应用，保证重算幂等。 */
+    public boolean filterCollapsedApplied;
+    /** 折叠占位文案，与上游 filterActionCollapsePlaceholder 一致。 */
+    private static final String FILTER_COLLAPSE_PLACEHOLDER = "💬 消息已被过滤规则折叠";
     public boolean isMediaSpoilersRevealed;
     public boolean isMediaSpoilersRevealedInSharedMedia;
     public boolean revealingMediaSpoilers;
@@ -2114,6 +2125,31 @@ public class MessageObject {
         }
 
         updateMessageText(users, chats, sUsers, sChats);
+        // 消息过滤器 / 过滤规则：在 setType 前应用「遮罩」「折叠」，隐藏由渲染层跳过
+        filterAction = -1;
+        final int __filterAct = getFilterAction();
+        if (__filterAct == MessageFilterRules.ACTION_SPOILER
+                && filterSpoilerEntity == null && !isRestrictedMessage) {
+            final int len = messageOwner.message != null ? messageOwner.message.length() : 0;
+            if (len > 0) {
+                // 纯文本消息的 entities 通常是 null，不补一个空列表的话遮罩规则永远不会生效
+                if (messageOwner.entities == null) {
+                    messageOwner.entities = new ArrayList<>();
+                }
+                TLRPC.TL_messageEntitySpoiler spoiler = new TLRPC.TL_messageEntitySpoiler();
+                spoiler.offset = 0;
+                spoiler.length = len;
+                messageOwner.entities.add(spoiler);
+                filterSpoilerEntity = spoiler;
+            }
+            isSpoilersRevealed = false;
+            isMediaSpoilersRevealed = false;
+        }
+        if (__filterAct == MessageFilterRules.ACTION_COLLAPSE && !isRestrictedMessage) {
+            messageText = FILTER_COLLAPSE_PLACEHOLDER;
+            isRestrictedMessage = true;
+            filterCollapsedApplied = true;
+        }
         setType();
         if (generateLayout) {
             updateTranslation(false);
@@ -2131,6 +2167,9 @@ public class MessageObject {
 
         createMessageSendInfo();
         generateCaption();
+        if (filterCollapsedApplied) {
+            caption = null;
+        }
         if (generateLayout) {
             TextPaint paint;
             if (getMedia(messageOwner) instanceof TLRPC.TL_messageMediaGame) {
@@ -4859,6 +4898,170 @@ public class MessageObject {
             chat = MessagesController.getInstance(currentAccount).getChat(chatId);
         }
         return chat;
+    }
+
+    /** 是否应被消息过滤器 / 过滤规则完全隐藏。 */
+    public boolean isFilterHidden() {
+        return getFilterAction() == MessageFilterRules.ACTION_HIDE;
+    }
+
+    /**
+     * 返回此消息应执行的过滤动作（见 {@link MessageFilterRules}）。
+     * 首次调用计算并缓存；规则变化后由 {@link #reapplyFilterAction()} 重置。
+     */
+    public int getFilterAction() {
+        if (filterAction != -1) {
+            return filterAction;
+        }
+        int result = MessageFilterRules.ACTION_NONE;
+        // 优先用服务端下发的原文：messageText 可能经过 BAD_CHARS 处理（长消息会插入零宽字符）、
+        // zalgo 过滤或折叠占位符替换，拿它匹配会出现「短消息能命中、长消息命中不了」
+        final CharSequence filterMessageText = filterProbeText();
+        final CharSequence filterText = filterProbeCaption();
+        final String fileName = filterProbeFileName();
+        final long senderId = getSenderId();
+        final long viaBotId = messageOwner != null ? messageOwner.via_bot_id : 0L;
+        // 本仓库的 TLRPC.Message 没有 via_bot_name 字段，按 id 匹配即可
+        final String viaBotName = null;
+        final Pattern filterPattern = MessageFilter.getPattern();
+        boolean byMessageFilter = false;
+        if (filterPattern != null
+                && ((filterMessageText != null && filterPattern.matcher(filterMessageText).find())
+                || (filterText != null && filterPattern.matcher(filterText).find()))) {
+            result = MessageFilterRules.ACTION_HIDE;
+            byMessageFilter = true;
+        }
+        if (result != MessageFilterRules.ACTION_HIDE) {
+            // 带 caption 的媒体消息 messageText 就是 caption，文件名不在里面；
+            // 单独取出来作为额外匹配串，否则按 .apk / .zip 这类后缀过滤会漏。
+            // 只对 document 取（照片没有用户可见文件名，且 photo 字段可能为空）
+            final int fromRules = MessageFilterRules.match(filterMessageText, filterText, fileName, senderId, viaBotId, viaBotName);
+            if (fromRules > result) {
+                result = fromRules;
+            }
+        }
+        filterAction = result;
+        // 探针：命中就留痕，日志里能直接看到是哪条规则、依据哪段文本命中的
+        if (result != MessageFilterRules.ACTION_NONE) {
+            MessageFilterRules.logHit(getId(), filterMessageText, filterText, fileName, senderId, viaBotId, viaBotName, result, byMessageFilter);
+        }
+        return result;
+    }
+
+    /**
+     * 探针：输出本条消息的过滤判定详情，无论命中与否。
+     *
+     * <p>供批次汇总在「有规则但整批零命中」时采样调用，用来回答
+     * 「为什么这条没被过滤」——是文本不在匹配串、还是规则压根没加载。</p>
+     */
+    public void dumpFilterProbe() {
+        if (!MessageFilterRules.probeEnabled()) {
+            return;
+        }
+        final CharSequence filterMessageText = filterProbeText();
+        final CharSequence filterText = filterProbeCaption();
+        final String fileName = filterProbeFileName();
+        final long viaBotId = messageOwner != null ? messageOwner.via_bot_id : 0L;
+        final int act = getFilterAction();
+        if (act != MessageFilterRules.ACTION_NONE) {
+            return; // 命中的已经在 getFilterAction 里打过，避免重复
+        }
+        MessageFilterRules.logMiss(getId(), filterMessageText, filterText, fileName, getSenderId(), viaBotId, null);
+    }
+
+    /** 规则匹配用的正文：优先服务端原文，避免 messageText 的字符改写导致漏匹配。 */
+    private CharSequence filterProbeText() {
+        return messageOwner != null && messageOwner.message != null ? messageOwner.message : messageText;
+    }
+
+    /** 规则匹配用的说明文字：媒体 caption 要等 generateCaption() 才有，构造中途用原文兜底。 */
+    private CharSequence filterProbeCaption() {
+        CharSequence c = caption;
+        if (c == null && messageText != null && !isMediaEmpty() && !filterCollapsedApplied && messageOwner != null) {
+            c = messageOwner.message;
+        }
+        return c;
+    }
+
+    /** 规则匹配用的文件名：只对 document 取，照片没有用户可见文件名。 */
+    private String filterProbeFileName() {
+        return getDocument() != null ? getFileName() : null;
+    }
+
+    /** 规则变化后重算并就地应用动作。 */
+    public void reapplyFilterAction() {
+        final boolean hadModification = filterCollapsedApplied || filterSpoilerEntity != null;
+        filterAction = -1;
+        final int act = getFilterAction();
+        if (act == MessageFilterRules.ACTION_NONE && !hadModification) {
+            // 绝大多数消息没有任何动作，跳过 generateLayout / setType 这些重活，
+            // 避免一次性重算上千条时卡住主线程
+            return;
+        }
+        applyFilterActionNow();
+    }
+
+    /**
+     * 相册组内传播：整组取最高动作。
+     *
+     * @return true 表示动作确实提高，调用方需要刷新界面
+     */
+    public boolean applyGroupFilterAction(int act) {
+        if (act == MessageFilterRules.ACTION_NONE || act <= getFilterAction()) {
+            return false;
+        }
+        filterAction = act;
+        applyFilterActionNow();
+        return true;
+    }
+
+    /** 把动作落到 messageText / entities 上，可重复调用。 */
+    private void applyFilterActionNow() {
+        final int act = getFilterAction();
+        if (act == MessageFilterRules.ACTION_HIDE && !filterCollapsedApplied && filterSpoilerEntity == null) {
+            // 纯隐藏不需要改文本：消息随后会从列表移除，跳过 generateLayout 这类重活
+            return;
+        }
+        if (act == MessageFilterRules.ACTION_SPOILER && filterSpoilerEntity == null && !isRestrictedMessage) {
+            final int len = messageOwner != null && messageOwner.message != null ? messageOwner.message.length() : 0;
+            if (len > 0) {
+                // 同上：纯文本消息 entities 为 null 时要补列表，否则遮罩不生效
+                if (messageOwner.entities == null) {
+                    messageOwner.entities = new ArrayList<>();
+                }
+                TLRPC.TL_messageEntitySpoiler spoiler = new TLRPC.TL_messageEntitySpoiler();
+                spoiler.offset = 0;
+                spoiler.length = len;
+                messageOwner.entities.add(spoiler);
+                filterSpoilerEntity = spoiler;
+            }
+            isSpoilersRevealed = false;
+            isMediaSpoilersRevealed = false;
+        } else if (act != MessageFilterRules.ACTION_SPOILER && filterSpoilerEntity != null) {
+            if (messageOwner != null && messageOwner.entities != null) {
+                messageOwner.entities.remove(filterSpoilerEntity);
+            }
+            filterSpoilerEntity = null;
+        }
+        if (act == MessageFilterRules.ACTION_COLLAPSE && !filterCollapsedApplied) {
+            messageText = FILTER_COLLAPSE_PLACEHOLDER;
+            caption = null;
+            isRestrictedMessage = true;
+            filterCollapsedApplied = true;
+            forceUpdate = true;
+        } else if (act != MessageFilterRules.ACTION_COLLAPSE && filterCollapsedApplied) {
+            filterCollapsedApplied = false;
+            isRestrictedMessage = false;
+            updateMessageText();
+            forceUpdate = true;
+        }
+        generateLayout(null);
+        setType();
+        caption = null;
+        generateCaption();
+        if (filterCollapsedApplied) {
+            caption = null;
+        }
     }
 
     public void updateMessageText() {

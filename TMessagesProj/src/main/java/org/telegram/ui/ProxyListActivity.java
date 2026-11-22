@@ -98,6 +98,8 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
 
     private int rowCount;
     @Keep
+    private int proxyPoolRow;
+    @Keep
     private int useProxyRow;
     private int useProxyShadowRow;
     private int connectionsHeaderRow;
@@ -224,9 +226,15 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
         }
 
         public void setProxy(SharedConfig.ProxyInfo proxyInfo) {
-            textView.setText(proxyInfo.settings.getType() == ProxySettings.Type.WEB
+            String base = proxyInfo.settings.getType() == ProxySettings.Type.WEB
                     ? proxyInfo.settings.getAddress() + " (WEB)"
-                    : proxyInfo.settings.getAddress() + ":" + proxyInfo.settings.getPort());
+                    : proxyInfo.settings.getAddress() + ":" + proxyInfo.settings.getPort();
+            // 备注功能：有备注时显示为 "地址（备注）"
+            String remark = xyz.nextalone.nagram.ui.ProxyRemarks.get(proxyInfo);
+            if (!TextUtils.isEmpty(remark)) {
+                base = base + "（" + remark + "）";
+            }
+            textView.setText(base);
             currentInfo = proxyInfo;
         }
 
@@ -591,6 +599,8 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
                     textCheckCell.setChecked(true);
                 }
                 ConnectionsManager.setProxySettings(useProxySettings, SharedConfig.currentProxy.settings);
+            } else if (position == proxyPoolRow) {
+                presentFragment(new xyz.nextalone.nagram.ui.ProxyPoolActivity());
             } else if (position == proxyAddRow) {
                 presentFragment(new ProxySettingsActivity());
             } else if (position == deleteAllRow) {
@@ -622,7 +632,18 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
         });
         listView.setOnItemLongClickListener((view, position) -> {
             if (position >= proxyStartRow && position < proxyEndRow) {
-                listAdapter.toggleSelected(position);
+                final SharedConfig.ProxyInfo info = proxyList.get(position - proxyStartRow);
+                org.telegram.ui.Components.ItemOptions options = org.telegram.ui.Components.ItemOptions.makeOptions(this, view);
+                options.add(R.drawable.msg_edit, "设置备注", () -> showRemarkDialog(info));
+                options.add(R.drawable.msg_copy, "复制地址", () -> {
+                    String address = info.settings.getType() == ProxySettings.Type.WEB
+                            ? "https://t.me/proxy?server=" + info.settings.getAddress() + "&port=" + info.settings.getPort() + "&secret=" + info.settings.getSecret()
+                            : "socks5://" + info.settings.getAddress() + ":" + info.settings.getPort();
+                    AndroidUtilities.addToClipboard(address);
+                    org.telegram.ui.Components.BulletinFactory.of(this).createCopyLinkBulletin().show();
+                });
+                options.add(R.drawable.msg_delete, "多选管理", () -> listAdapter.toggleSelected(position));
+                options.show();
                 return true;
             }
             return false;
@@ -712,8 +733,38 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
         return super.onBackPressed(invoked);
     }
 
+    private void showRemarkDialog(SharedConfig.ProxyInfo info) {
+        final Context context = getParentActivity();
+        if (context == null) {
+            return;
+        }
+        final android.widget.EditText editText = new android.widget.EditText(context);
+        editText.setText(xyz.nextalone.nagram.ui.ProxyRemarks.get(info));
+        editText.setHint("给这个代理起个名字，留空可清除");
+        editText.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 17);
+        editText.setSingleLine(true);
+        int pad = AndroidUtilities.dp(20);
+        editText.setPadding(pad, AndroidUtilities.dp(8), pad, AndroidUtilities.dp(8));
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(context);
+        builder.setTitle("代理备注");
+        builder.setView(editText);
+        builder.setNegativeButton(getString(R.string.Cancel), null);
+        builder.setPositiveButton(getString(R.string.Done), (dialog, which) -> {
+            xyz.nextalone.nagram.ui.ProxyRemarks.set(info, editText.getText().toString());
+            updateRows(true);
+            if (listAdapter != null) {
+                listAdapter.notifyDataSetChanged();
+            }
+        });
+        AlertDialog dialog = builder.create();
+        showDialog(dialog);
+        dialog.setOnShowListener(d -> AndroidUtilities.showKeyboard(editText));
+    }
+
     private void updateRows(boolean notify) {
         rowCount = 0;
+        proxyPoolRow = rowCount++;
         useProxyRow = rowCount++;
         if (useProxySettings && SharedConfig.currentProxy != null && SharedConfig.proxyList.size() > 1 && IS_PROXY_ROTATION_AVAILABLE) {
             rotationRow = rowCount++;
@@ -965,7 +1016,9 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
                 case VIEW_TYPE_TEXT_SETTING: {
                     TextSettingsCell textCell = (TextSettingsCell) holder.itemView;
                     ThemeBind.textColor(textCell.getTextView(), Theme.key_windowBackgroundWhiteBlackText);
-                    if (position == proxyAddRow) {
+                    if (position == proxyPoolRow) {
+                        textCell.setText("代理池", useProxyRow != -1);
+                    } else if (position == proxyAddRow) {
                         textCell.setText(getString(R.string.AddProxy), deleteAllRow != -1);
                     } else if (position == deleteAllRow) {
                         ThemeBind.textColor(textCell.getTextView(), Theme.key_text_RedRegular);
@@ -1112,6 +1165,8 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
                 return -2;
             } else if (position == proxyAddRow) {
                 return -3;
+            } else if (position == proxyPoolRow) {
+                return -12;
             } else if (position == useProxyRow) {
                 return -4;
             } else if (position == connectionsHeaderRow) {
@@ -1135,7 +1190,7 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
         public int getItemViewType(int position) {
             if (position == useProxyShadowRow || position == proxyShadowRow) {
                 return VIEW_TYPE_SHADOW;
-            } else if (position == proxyAddRow || position == deleteAllRow) {
+            } else if (position == proxyAddRow || position == deleteAllRow || position == proxyPoolRow) {
                 return VIEW_TYPE_TEXT_SETTING;
             } else if (position == useProxyRow || position == rotationRow) {
                 return VIEW_TYPE_TEXT_CHECK;

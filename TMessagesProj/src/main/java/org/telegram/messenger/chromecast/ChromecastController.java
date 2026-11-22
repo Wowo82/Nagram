@@ -17,6 +17,7 @@ import com.google.android.gms.cast.framework.SessionManagerListener;
 import com.google.android.gms.cast.framework.media.RemoteMediaClient;
 
 import org.telegram.messenger.ApplicationLoader;
+import org.telegram.messenger.FileLog;
 import org.telegram.ui.CastSync;
 import org.telegram.ui.PhotoViewer;
 
@@ -31,25 +32,56 @@ public class ChromecastController implements SessionManagerListener<CastSession>
 
     private final ChromecastControllerState state;
     private final SessionManager sessionManager;
+    private final boolean available;
 
     private ChromecastController() {
-        CastContext castContext = CastContext.getSharedInstance(ApplicationLoader.applicationContext);
-        castContext.addCastStateListener(i -> Log.d(CAST_STATE, "onCastStateChanged " + i));  // ???
+        ChromecastControllerState localState = null;
+        SessionManager localSessionManager = null;
+        boolean localAvailable = false;
+        try {
+            CastContext castContext = CastContext.getSharedInstance(ApplicationLoader.applicationContext);
+            castContext.addCastStateListener(i -> Log.d(CAST_STATE, "onCastStateChanged " + i));
 
-        state = new ChromecastControllerState();
+            localState = new ChromecastControllerState();
 
-        sessionManager = castContext.getSessionManager();
-        sessionManager.addSessionManagerListener(this, CastSession.class);
+            localSessionManager = castContext.getSessionManager();
+            localSessionManager.addSessionManagerListener(this, CastSession.class);
 
-        tryInitClient(sessionManager.getCurrentCastSession());
+            localAvailable = true;
+        } catch (Throwable t) {
+            // 设备上没有 Google Play 服务 / Cast 模块时，CastContext 会抛
+            // ModuleUnavailableException 包装的 RuntimeException。
+            // 这里必须吞掉，否则从 PhotoViewer 打开图片的触摸路径会一路冒到主线程。
+            FileLog.e("ChromecastController: Google Cast is unavailable", t);
+        }
+
+        available = localAvailable;
+        state = localState != null ? localState : new ChromecastControllerState();
+        sessionManager = localSessionManager;
+
+        if (available) {
+            try {
+                tryInitClient(sessionManager.getCurrentCastSession());
+            } catch (Throwable t) {
+                FileLog.e(t);
+            }
+        }
+    }
+
+    /** 本机是否存在可用的 Google Cast 模块。 */
+    public boolean isAvailable() {
+        return available;
     }
 
     public boolean isCasting() {
-        return state.getClient() != null;
+        return available && state.getClient() != null;
     }
 
     public void setCurrentMediaAndCastIfNeeded(ChromecastMediaVariations newMedia) {
         Log.d(CAST_CONTROLLER, "set current media");
+        if (!available) {
+            return;
+        }
         ChromecastMediaVariations currentMedia = state.getMedia();
         if (CastSync.isActive() && eq(currentMedia, newMedia)) {
 //            CastSync.syncInterface();
@@ -59,11 +91,14 @@ public class ChromecastController implements SessionManagerListener<CastSession>
     }
 
     public String setCover(File file) {
+        if (!available) {
+            return null;
+        }
         return state.setCoverFile(file);
     }
 
     public boolean isPlaying(ChromecastMediaVariations media) {
-        return CastSync.isActive() && eq(state.getMedia(), media);
+        return available && CastSync.isActive() && eq(state.getMedia(), media);
     }
 
     public static boolean eq(ChromecastMediaVariations a, ChromecastMediaVariations b) {

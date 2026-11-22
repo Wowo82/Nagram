@@ -137,6 +137,8 @@ public class FileLoader extends BaseController {
                     type = MEDIA_DIR_AUDIO;
                 } else if (MessageObject.isVideoDocument(document)) {
                     type = MEDIA_DIR_VIDEO;
+                } else if (isHlsManifestDocument(document)) {
+                    type = MEDIA_DIR_CACHE;
                 } else {
                     type = MEDIA_DIR_DOCUMENT;
                 }
@@ -905,7 +907,7 @@ public class FileLoader extends BaseController {
                 type = MEDIA_DIR_VIDEO;
                 documentId = document.id;
                 dcId = document.dc_id;
-            } else if (MessageObject.isStickerDocument(document)) {
+            } else if (MessageObject.isStickerDocument(document) || isHlsManifestDocument(document)) {
                 type = MEDIA_DIR_CACHE;
                 documentId = document.id;
                 dcId = document.dc_id;
@@ -980,7 +982,7 @@ public class FileLoader extends BaseController {
                         }
                     } else if (!TextUtils.isEmpty(getDocumentFileName(document)) && canSaveAsFile(parentObject)) {
                         storeFileName = getDocumentFileName(document);
-                        File newDir = getDirectory(MEDIA_DIR_DOCUMENT);
+                        File newDir = getDirectory(MEDIA_DIR_FILES);
                         if (newDir != null) {
                             storeDir = newDir;
                             saveCustomPath = true;
@@ -1377,6 +1379,8 @@ public class FileLoader extends BaseController {
                         type = MEDIA_DIR_VIDEO;
                     } else if (MessageObject.isStickerDocument(document)) {
                         dir = getDirectory(MEDIA_DIR_CACHE);
+                    } else if (isHlsManifestDocument(document)) {
+                        dir = getDirectory(type = MEDIA_DIR_CACHE);
                     } else {
                         type = MEDIA_DIR_DOCUMENT;
                     }
@@ -1649,6 +1653,16 @@ public class FileLoader extends BaseController {
         }
         ext = ext.toUpperCase();
         return ext;
+    }
+
+    /**
+     * HLS 视频的 m3u8 播放清单（application/x-mpegurl）。
+     *
+     * 这类文件只是播放时用来定位分片的索引，属于可再生的播放缓存，
+     * 不应该和用户文档混在 documents 目录里，统一放到 cache/caches。
+     */
+    public static boolean isHlsManifestDocument(TLRPC.Document document) {
+        return document != null && "application/x-mpegurl".equalsIgnoreCase(document.mime_type);
     }
 
     public static String getAttachFileName(TLObject attach) {

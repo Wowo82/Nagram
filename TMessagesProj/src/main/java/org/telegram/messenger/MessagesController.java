@@ -2349,7 +2349,22 @@ public class MessagesController extends BaseController implements NotificationCe
                     dialogFiltersLoaded = true;
                     getNotificationCenter().postNotificationName(NotificationCenter.dialogFiltersUpdated);
                     if (remote == 0) {
-                        loadRemoteFilters(false);
+                        boolean hasCustomFilter = false;
+                        for (int i = 0; i < dialogFilters.size(); i++) {
+                            if (!dialogFilters.get(i).isDefault()) {
+                                hasCustomFilter = true;
+                                break;
+                            }
+                        }
+                        if (!hasCustomFilter && getUserConfig().filtersLoaded) {
+                            // 本地只剩默认的“所有”时（MessagesStorage 在表为空时会自动补一个 id=0 的默认项，
+                            // 所以 dialogFilters 永远不会是空列表），filtersLoaded 仍是 true 会阻止远端拉取，
+                            // 首页文件夹标签栏就再也不显示。这里改为判断“没有任何非默认文件夹”，强制拉一次。
+                            FileLog.d("no custom dialog filters, force reload from server");
+                            loadRemoteFilters(true);
+                        } else {
+                            loadRemoteFilters(false);
+                        }
                     }
 
                     if (pinnedRemoteDialogs != null && !pinnedRemoteDialogs.dialogs.isEmpty()) {

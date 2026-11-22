@@ -578,6 +578,15 @@ public class ViewPagerFixed extends FrameLayout {
         }
 
         if (adapter != null && !adapter.canScrollTo(currentPosition + (forward ? +1 : -1))) {
+            // 目标页被禁用时，向后寻找最近的可达页并直接跳转（例如隐藏「联系人」标签后的滑动）
+            int target = currentPosition + (forward ? 1 : -1);
+            while (target >= 0 && target <= adapter.getItemCount() - 1 && !adapter.canScrollTo(target)) {
+                target += forward ? 1 : -1;
+            }
+            if (target < 0 || target > adapter.getItemCount() - 1) {
+                return false;
+            }
+            scrollToPosition(target);
             return false;
         }
 

@@ -421,6 +421,7 @@ import xyz.nextalone.nagram.helper.MessageHelper;
 import xyz.nextalone.nagram.helper.MessageMenuCompact;
 import xyz.nextalone.nagram.helper.MotionPhotoHelper;
 import xyz.nextalone.nagram.helper.SystemAiServiceHelper;
+import xyz.nextalone.nagram.ui.MessageFilterRules;
 
 @SuppressWarnings("unchecked")
 public class ChatActivity extends BaseFragment implements
@@ -490,6 +491,8 @@ public class ChatActivity extends BaseFragment implements
     public final static int nkbtn_setReminder = 2029;
     public final static int nkbtn_sticker_copy = 2031;
     public final static int nkbtn_sticker_copy_png = 2032;
+    /** 长按菜单「屏蔽」：与消息过滤器联动。 */
+    public final static int nkbtn_block = 2036;
 
 
     public int shareAlertDebugMode = DEBUG_SHARE_ALERT_MODE_NORMAL;
@@ -3124,6 +3127,8 @@ public class ChatActivity extends BaseFragment implements
 
         // na: unread count
         getNotificationCenter().addObserver(this, NotificationCenter.dialogsUnreadCounterChanged);
+        // 消息过滤器 / 规则变更后立即清理当前会话中已命中的消息
+        NotificationCenter.getGlobalInstance().addObserver(this, NotificationCenter.messageFilterRulesChanged);
 
         if (chatMode != MODE_SCHEDULED) {
             if (threadMessageId == 0) {
@@ -3649,6 +3654,7 @@ public class ChatActivity extends BaseFragment implements
 
         // na: unread count
         getNotificationCenter().removeObserver(this, NotificationCenter.dialogsUnreadCounterChanged);
+        NotificationCenter.getGlobalInstance().removeObserver(this, NotificationCenter.messageFilterRulesChanged);
 
         getNotificationCenter().removePostponeNotificationsCallback(postponeNotificationsWhileLoadingCallback);
         getMessagesController().setLastCreatedDialogId(dialog_id, chatMode == MODE_SCHEDULED, false);
@@ -3821,6 +3827,15 @@ public class ChatActivity extends BaseFragment implements
                 !DialogObject.isEncryptedDialog(chatActivity.getDialogId()) && chatActivity.isPeerNoForwardsWithOverride() ||
                 selectedView != null && selectedView.getMessageObject() != null && (selectedView.getMessageObject().messageOwner != null && selectedView.getMessageObject().messageOwner.noforwards)
             );
+        }
+
+        @Override
+        protected void onBlockClick(MessageObject messageObject, CharSequence text) {
+            if (chatActivity == null || messageObject == null) {
+                return;
+            }
+            // 工具条「屏蔽」一键生效：选中文字直接写入消息过滤器，不再弹二次选择框
+            xyz.nextalone.nagram.ui.MessageBlocker.blockText(chatActivity, messageObject, text);
         }
 
         @Override
@@ -11405,6 +11420,7 @@ public class ChatActivity extends BaseFragment implements
         }
 
         actionModeOtherItem.addSubItem(nkbtn_translate, R.drawable.ic_translate, LocaleController.getString("Translate", R.string.Translate));
+        actionModeOtherItem.addSubItem(nkbtn_block, R.drawable.msg_block2, "屏蔽");
         if (NekoConfig.showShareMessages.Bool())
             actionModeOtherItem.addSubItem(nkbtn_sharemessage, R.drawable.msg_shareout, LocaleController.getString("ShareMessages", R.string.ShareMessages));
         actionModeOtherItem.addSubItem(nkbtn_unpin, R.drawable.msg_unpin, LocaleController.getString("UnpinMessage", R.string.UnpinMessage));
@@ -22371,6 +22387,8 @@ public class ChatActivity extends BaseFragment implements
     public void didReceivedNotification(int id, int account, final Object... args) {
         if (id == NotificationCenter.messagesDidLoad) {
             didReceivedNotification_messagesDidLoad(id, account, args);
+        } else if (id == NotificationCenter.messageFilterRulesChanged) {
+            applyMessageFiltersToLoadedMessages();
         } else {
             didReceivedNotification2(id, account, args);
             didReceivedNotification3(id, account, args);
@@ -22850,6 +22868,10 @@ public class ChatActivity extends BaseFragment implements
         if (!chatWasReset && (load_type == 2 || load_type == 1) && messArr.isEmpty() && !isCache) {
             forwardEndReached[0] = true;
         }
+        // 相册的说明文字只挂在其中一条消息上，先把过滤动作传播给同组，
+        // 否则下面逐条 isFilterHidden() 只会跳过带文字那条，同组图片/文件仍会显示
+        propagateFilterActionInsideGroup(messArr);
+        logFilterProbeBatch("load", messArr);
         LongSparseArray<MessageObject.GroupedMessages> newGroups = null;
         LongSparseArray<MessageObject.GroupedMessages> changedGroups = null;
         MediaController mediaController = MediaController.getInstance();
@@ -22959,6 +22981,9 @@ public class ChatActivity extends BaseFragment implements
 
             TLRPC.MessageAction action = obj.messageOwner.action;
             if (obj.type < 0 || loadIndex == 1 && action instanceof TLRPC.TL_messageActionChatMigrateTo) {
+                continue;
+            }
+            if (obj.isFilterHidden()) {
                 continue;
             }
 
@@ -23666,6 +23691,10 @@ public class ChatActivity extends BaseFragment implements
                 }
             }
         }
+        if (universalNotify) {
+            // 相册：caption 命中时同组图片也要一起消失，加载完成后统一收口
+            applyMessageFiltersToLoadedMessages(false);
+        }
     }
 
     private void didReceivedNotification2(int id, int account, final Object... args) {
@@ -23883,7 +23912,21 @@ public class ChatActivity extends BaseFragment implements
                 if (!scheduled) {
                     invalidatePaidMessagesPriceOnIncoming(arr);
                 }
-                processNewMessages(arr);
+                // 新到达的消息同样走过滤，命中规则的直接丢弃。
+                // 相册只有一条带说明文字，必须先把 HIDE 传播给同组，
+                // 再把会话里已加载的同组消息一起清掉，否则会遗留同组的图片/文件
+                propagateFilterActionInsideGroup(arr);
+                logFilterProbeBatch("incoming", arr);
+                removeLoadedGroupedMessagesForIncoming(arr);
+                for (int a = arr.size() - 1; a >= 0; a--) {
+                    MessageObject incoming = arr.get(a);
+                    if (incoming != null && incoming.getId() != 0 && incoming.isFilterHidden()) {
+                        arr.remove(a);
+                    }
+                }
+                if (!arr.isEmpty()) {
+                    processNewMessages(arr);
+                }
             } else if (ChatObject.isChannel(currentChat) && !currentChat.megagroup && chatInfo != null && did == -chatInfo.linked_chat_id) {
                 for (int a = 0, N = arr.size(); a < N; a++) {
                     MessageObject messageObject = arr.get(a);
@@ -28219,6 +28262,244 @@ public class ChatActivity extends BaseFragment implements
             sponsoredMessagesCount++;
         }
         return sponsoredMessagesCount;
+    }
+
+    /**
+     * 探针：统计一批消息的过滤结果，并输出汇总。
+     *
+     * <p>回答「规则到底有没有作用到界面上」：total 是本批参与判断的消息数，
+     * hide / spoiler / collapse 是各动作的条数。整批零命中时再采样几条明细，
+     * 日志里就能直接看到这些消息的正文、文件名、发送者，便于判断是规则写错还是字段取错。</p>
+     */
+    private void logFilterProbeBatch(String scene, List<MessageObject> list) {
+        if (!MessageFilterRules.probeEnabled()) {
+            return;
+        }
+        if (list == null || list.isEmpty()) {
+            FileLog.d(MessageFilterRules.PROBE_TAG + " batch[" + scene + "] chat=" + dialog_id
+                    + " total=0 " + MessageFilterRules.rulesSummary());
+            return;
+        }
+        int total = 0, hide = 0, spoiler = 0, collapse = 0;
+        final ArrayList<MessageObject> samples = new ArrayList<>();
+        for (int a = 0, N = list.size(); a < N; a++) {
+            final MessageObject object = list.get(a);
+            if (object == null || object.getId() == 0 || object.isDateObject) {
+                continue;
+            }
+            total++;
+            final int act = object.getFilterAction();
+            if (act == MessageFilterRules.ACTION_HIDE) {
+                hide++;
+            } else if (act == MessageFilterRules.ACTION_SPOILER) {
+                spoiler++;
+            } else if (act == MessageFilterRules.ACTION_COLLAPSE) {
+                collapse++;
+            } else if (samples.size() < 3 && object.messageOwner != null && object.messageOwner.message != null) {
+                samples.add(object);
+            }
+        }
+        FileLog.d(MessageFilterRules.PROBE_TAG + " batch[" + scene + "] chat=" + dialog_id
+                + " total=" + total + " hide=" + hide + " spoiler=" + spoiler + " collapse=" + collapse
+                + " " + MessageFilterRules.rulesSummary());
+        // 整批零命中：采样几条，看看实际参与匹配的文本长什么样
+        if (hide + spoiler + collapse == 0) {
+            for (int a = 0, N = samples.size(); a < N; a++) {
+                samples.get(a).dumpFilterProbe();
+            }
+        }
+    }
+
+    /**
+     * 在给定列表内部按 grouped_id 传播过滤动作。
+     *
+     * <p>相册（media group）的多条消息共享同一个 grouped_id，说明文字通常只挂在其中一条上，
+     * 关键词过滤也只能命中那一条。规则变更时 {@link #applyMessageFiltersToLoadedMessages}
+     * 已经做过整组传播，但「新消息到达」和「历史消息加载」这两条路径此前只逐条判断，
+     * 于是同组的图片 / 视频 / 文件会残留在会话里，看起来像屏蔽只生效了一半。</p>
+     */
+    private void propagateFilterActionInsideGroup(List<MessageObject> list) {
+        if (list == null || list.size() < 2) {
+            return;
+        }
+        LongSparseArray<Integer> groupActions = null;
+        for (int a = 0, N = list.size(); a < N; a++) {
+            final MessageObject object = list.get(a);
+            if (object == null || object.getId() == 0 || object.isDateObject) {
+                continue;
+            }
+            final int action = object.getFilterAction();
+            if (action == xyz.nextalone.nagram.ui.MessageFilterRules.ACTION_NONE) {
+                continue;
+            }
+            final long groupId = object.getGroupId();
+            if (groupId == 0) {
+                continue;
+            }
+            if (groupActions == null) {
+                groupActions = new LongSparseArray<>();
+            }
+            final Integer old = groupActions.get(groupId);
+            if (old == null || action > old) {
+                groupActions.put(groupId, action);
+            }
+        }
+        if (groupActions == null) {
+            return;
+        }
+        for (int a = 0, N = list.size(); a < N; a++) {
+            final MessageObject object = list.get(a);
+            if (object == null) {
+                continue;
+            }
+            final Integer action = groupActions.get(object.getGroupId());
+            if (action != null) {
+                object.applyGroupFilterAction(action);
+            }
+        }
+    }
+
+    /**
+     * 新消息命中过滤时，把会话里已经加载的同组消息一并移除。
+     *
+     * <p>相册可能被拆成多条 update 下发：带说明文字的那条被丢弃时，
+     * 同组先到的图片 / 文件已经在 {@link #messages} 里，需要单独清掉。</p>
+     */
+    private void removeLoadedGroupedMessagesForIncoming(ArrayList<MessageObject> incoming) {
+        if (incoming == null || incoming.isEmpty() || messages == null || messages.isEmpty()) {
+            return;
+        }
+        LongSparseArray<Boolean> hitGroups = null;
+        final HashSet<Integer> incomingIds = new HashSet<>();
+        for (int a = 0, N = incoming.size(); a < N; a++) {
+            final MessageObject object = incoming.get(a);
+            if (object == null) {
+                continue;
+            }
+            incomingIds.add(object.getId());
+            if (object.getId() == 0 || !object.isFilterHidden()) {
+                continue;
+            }
+            final long groupId = object.getGroupId();
+            if (groupId != 0) {
+                if (hitGroups == null) {
+                    hitGroups = new LongSparseArray<>();
+                }
+                hitGroups.put(groupId, Boolean.TRUE);
+            }
+        }
+        if (hitGroups == null) {
+            return;
+        }
+        final ArrayList<Integer> ids = new ArrayList<>();
+        final HashSet<Integer> idSet = new HashSet<>();
+        for (int a = 0, N = messages.size(); a < N; a++) {
+            final MessageObject object = messages.get(a);
+            if (object == null || object.getId() == 0 || object.isDateObject) {
+                continue;
+            }
+            if (hitGroups.indexOfKey(object.getGroupId()) < 0) {
+                continue;
+            }
+            object.applyGroupFilterAction(xyz.nextalone.nagram.ui.MessageFilterRules.ACTION_HIDE);
+            if (object.isFilterHidden() && !incomingIds.contains(object.getId()) && idSet.add(object.getId())) {
+                ids.add(object.getId());
+            }
+        }
+        if (!ids.isEmpty()) {
+            long channelId = 0;
+            if (currentChat != null && ChatObject.isChannel(currentChat)) {
+                channelId = -dialog_id;
+            }
+            processDeletedMessages(ids, channelId, false);
+        }
+    }
+
+    /**
+     * 过滤规则变化后重算当前会话已加载的消息。
+     *
+     * <p>对齐上游：先让每条消息 reapply（折叠占位 / 遮罩 entity 就地增删），
+     * 再按分组（相册）把最高动作传播给整组，最后把 HIDE 的消息从列表里移除。
+     * 只做 UI 层处理，不删服务器消息、不写数据库。</p>
+     */
+    private void applyMessageFiltersToLoadedMessages() {
+        // 探针：规则变更后先确认读到的是哪套规则，再谈有没有生效
+        MessageFilterRules.logRuleSet("rules-changed");
+        applyMessageFiltersToLoadedMessages(true);
+    }
+
+    /**
+     * @param notifyIfNothingHidden 没有命中时是否还要刷新列表（规则变更时需要，刚加载完时不需要）
+     */
+    private void applyMessageFiltersToLoadedMessages(boolean notifyIfNothingHidden) {
+        if (messages == null || messages.isEmpty() || isInScheduleMode()) {
+            return;
+        }
+        final ArrayList<Integer> ids = new ArrayList<>();
+        final HashSet<Integer> idSet = new HashSet<>();
+        // 先按 grouped_id 就地聚合：相册的说明文字只挂在其中一条上，
+        // 直接依赖 groupedMessagesMap 可能在刚加载完、分组还没构建时漏掉同组消息。
+        final LongSparseArray<ArrayList<MessageObject>> groups = new LongSparseArray<>();
+        for (int a = 0, N = messages.size(); a < N; a++) {
+            final MessageObject object = messages.get(a);
+            if (object == null || object.getId() == 0 || object.isDateObject) {
+                continue;
+            }
+            object.reapplyFilterAction();
+            final long groupId = object.getGroupId();
+            if (groupId != 0) {
+                ArrayList<MessageObject> list = groups.get(groupId);
+                if (list == null) {
+                    list = new ArrayList<>();
+                    groups.put(groupId, list);
+                }
+                list.add(object);
+            }
+        }
+        // 整组取最强动作，再传播给每一条
+        for (int i = 0, N = groups.size(); i < N; i++) {
+            final ArrayList<MessageObject> group = groups.valueAt(i);
+            int maxAction = xyz.nextalone.nagram.ui.MessageFilterRules.ACTION_NONE;
+            for (int j = 0, M = group.size(); j < M; j++) {
+                final MessageObject item = group.get(j);
+                if (item != null && item.getFilterAction() > maxAction) {
+                    maxAction = item.getFilterAction();
+                }
+            }
+            if (maxAction == xyz.nextalone.nagram.ui.MessageFilterRules.ACTION_NONE) {
+                continue;
+            }
+            for (int j = 0, M = group.size(); j < M; j++) {
+                final MessageObject item = group.get(j);
+                if (item != null) {
+                    item.applyGroupFilterAction(maxAction);
+                }
+            }
+        }
+        // 传播之后统一收集：组里只有 caption 命中时，同组的图片 / 视频也要一起移除
+        for (int a = 0, N = messages.size(); a < N; a++) {
+            final MessageObject object = messages.get(a);
+            if (object == null || object.getId() == 0 || object.isDateObject) {
+                continue;
+            }
+            if (object.isFilterHidden() && idSet.add(object.getId())) {
+                ids.add(object.getId());
+            }
+        }
+        logFilterProbeBatch("reapply", messages);
+        if (MessageFilterRules.probeEnabled()) {
+            FileLog.d(MessageFilterRules.PROBE_TAG + " reapply chat=" + dialog_id
+                    + " groups=" + groups.size() + " toRemove=" + ids.size());
+        }
+        if (!ids.isEmpty()) {
+            long channelId = 0;
+            if (currentChat != null && ChatObject.isChannel(currentChat)) {
+                channelId = -dialog_id;
+            }
+            processDeletedMessages(ids, channelId, false);
+        } else if (notifyIfNothingHidden && chatAdapter != null) {
+            chatAdapter.notifyDataSetChanged();
+        }
     }
 
     private void processDeletedMessages(ArrayList<Integer> markAsDeletedMessages, long channelId, boolean sent) {
@@ -46757,6 +47038,13 @@ public class ChatActivity extends BaseFragment implements
             }
         } else if (id == nkbtn_translate) {
             nkbtn_translate(null, selectedObjectGroup);
+        } else if (id == nkbtn_block) {
+            ArrayList<MessageObject> blockTargets = getSelectedMessages();
+            if (blockTargets.isEmpty() && selectedObject != null) {
+                blockTargets = new ArrayList<>();
+                blockTargets.add(selectedObject);
+            }
+            xyz.nextalone.nagram.ui.MessageBlocker.blockMessages(this, blockTargets);
         } else if (id == nkbtn_unpin) {
             for (MessageObject selectedMessage : getSelectedMessages()) {
                 if (selectedMessage.messageOwner.pinned) {
@@ -47138,6 +47426,12 @@ public class ChatActivity extends BaseFragment implements
             }
             case nkbtn_translate: {
                 nkbtn_translate(selectedObject, selectedObjectGroup);
+                break;
+            }
+            case nkbtn_block: {
+                if (selectedObject != null) {
+                    xyz.nextalone.nagram.ui.MessageBlocker.blockMessages(this, java.util.Collections.singletonList(selectedObject));
+                }
                 break;
             }
             case nkbtn_detail: {
@@ -49673,6 +49967,11 @@ public class ChatActivity extends BaseFragment implements
                             options.add(nkbtn_translate);
                             icons.add(R.drawable.msg_translate);
                         }
+                    }
+                    if (messageObject != null || docsWithMessages) {
+                        items.add("屏蔽");
+                        options.add(nkbtn_block);
+                        icons.add(R.drawable.msg_block2);
                     }
                     if (NekoConfig.showShareMessages.Bool()) {
                         if (messageObject != null || docsWithMessages) {

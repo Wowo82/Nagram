@@ -117,6 +117,8 @@ public class NekoExperimentalSettingsActivity extends BaseNekoXSettingsActivity 
     private final AbstractConfigCell ignoreBlockedRepliesRow = cellGroup.appendCell(new ConfigCellTextCheck(NaConfig.INSTANCE.getIgnoreBlockedReplies()));
     private final AbstractConfigCell regexFiltersEnabledRow = cellGroup.appendCell(new ConfigCellTextCheck(NaConfig.INSTANCE.getRegexFiltersEnabled()));
     private final AbstractConfigCell regexFiltersEnableInChatsRow = cellGroup.appendCell(new ConfigCellTextCheck(NaConfig.INSTANCE.getRegexFiltersEnableInChats()));
+    private final AbstractConfigCell messageFilterRow = cellGroup.appendCell(new ConfigCellCustom("MessageFilter", CellGroup.ITEM_TYPE_TEXT_SETTINGS_CELL, true));
+    private final AbstractConfigCell messageFilterRulesRow = cellGroup.appendCell(new ConfigCellCustom("MessageFilterRules", CellGroup.ITEM_TYPE_TEXT_SETTINGS_CELL, true));
     private final AbstractConfigCell disableChatActionRow = cellGroup.appendCell(new ConfigCellTextCheck(NekoConfig.disableChatAction));
     private final AbstractConfigCell disableChoosingStickerRow = cellGroup.appendCell(new ConfigCellTextCheck(NekoConfig.disableChoosingSticker));
     private final AbstractConfigCell openUrlOutBotWebViewRegexRow = cellGroup.appendCell(new ConfigCellTextInput(null, NaConfig.INSTANCE.getOpenUrlOutBotWebViewRegex(),
@@ -259,6 +261,10 @@ public class NekoExperimentalSettingsActivity extends BaseNekoXSettingsActivity 
                             AndroidUtilities.runOnUIThread(() -> AlertsCreator.processError(currentAccount, error, this, req));
                         }
                     }));
+                } else if (position == cellGroup.rows.indexOf(messageFilterRow)) {
+                    xyz.nextalone.nagram.ui.MessageFilter.showDialog(this);
+                } else if (position == cellGroup.rows.indexOf(messageFilterRulesRow)) {
+                    presentFragment(new xyz.nextalone.nagram.ui.MessageFilterRulesActivity());
                 } else if (position == cellGroup.rows.indexOf(customAudioBitrateRow)) {
                     PopupBuilder builder = new PopupBuilder(view);
                     int currentBitrate = NekoConfig.customAudioBitrate.Int();
@@ -536,6 +542,10 @@ public class NekoExperimentalSettingsActivity extends BaseNekoXSettingsActivity 
                             if (NekoConfig.customAudioBitrate.Int() == 32)
                                 value += " (" + LocaleController.getString(R.string.Default) + ")";
                             textCell.setTextAndValue(LocaleController.getString(R.string.customGroupVoipAudioBitrate), value, divider);
+                        } else if (position == cellGroup.rows.indexOf(messageFilterRow)) {
+                            textCell.setText("消息过滤器", divider);
+                        } else if (position == cellGroup.rows.indexOf(messageFilterRulesRow)) {
+                            textCell.setText("消息过滤规则", divider);
                         }
                     }
                 } else {

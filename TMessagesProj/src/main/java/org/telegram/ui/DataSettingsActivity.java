@@ -28,7 +28,6 @@ import androidx.recyclerview.widget.RecyclerView;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.DownloadController;
-import org.telegram.messenger.ImageLoader;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.R;
@@ -61,13 +60,10 @@ import org.telegram.utils.glass.BaseFragmentSimpleGlass;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.HashSet;
 
 import kotlin.Unit;
 import tw.nekomimi.nekogram.ui.BottomBuilder;
-import tw.nekomimi.nekogram.NekoConfig;
-import tw.nekomimi.nekogram.utils.EnvUtil;
 
 public class DataSettingsActivity extends BaseFragment {
 
@@ -82,7 +78,6 @@ public class DataSettingsActivity extends BaseFragment {
     private int mobileRow;
     private int roamingRow;
     private int wifiRow;
-    private int storageNumRow;
     @Keep
     private int resetDownloadRow = -1;
     private int mediaDownloadSection2Row;
@@ -144,7 +139,6 @@ public class DataSettingsActivity extends BaseFragment {
         usageSectionRow = rowCount++;
         storageUsageRow = rowCount++;
         dataUsageRow = rowCount++;
-        storageNumRow = rowCount++;
         usageSection2Row = rowCount++;
         mediaDownloadSectionRow = rowCount++;
         mobileRow = rowCount++;
@@ -485,39 +479,6 @@ public class DataSettingsActivity extends BaseFragment {
                 dlg.show();
             } else if (position == dataUsageRow) {
                 presentFragment(new DataUsage2Activity());
-            } else if (position == storageNumRow) {
-                BottomBuilder builder = new BottomBuilder(getParentActivity());
-
-                builder.addTitle(LocaleController.getString(R.string.StoragePath));
-
-                AtomicReference<String> target = new AtomicReference<>();
-
-                builder.addRadioItems(EnvUtil.getAvailableDirectories(),
-                        (index, path) -> path.equals(NekoConfig.cachePath.String()), (__, path, cell) -> {
-
-                            target.set(path);
-                            builder.doRadioCheck(cell);
-
-                            return null;
-
-                        });
-
-                builder.addCancelButton();
-                builder.addOkButton((it) -> {
-
-                    if (target.get() != null) {
-
-                        NekoConfig.cachePath.setConfigString(target.get());
-                        ImageLoader.getInstance().checkMediaPaths();
-                        listAdapter.notifyItemChanged(position);
-
-                    }
-
-                    return Unit.INSTANCE;
-
-                });
-
-                builder.show();
             } else if (position == proxyRow) {
                 presentFragment(new ProxyListActivity());
             } else if (position == enableStreamRow) {
@@ -578,19 +539,6 @@ public class DataSettingsActivity extends BaseFragment {
         return listView;
     }
 
-    private void setStorageDirectory(String storageDir) {
-        SharedConfig.storageCacheDir = storageDir;
-        SharedConfig.saveConfig();
-        if (storageDir != null) {
-            SharedConfig.readOnlyStorageDirAlertShowed = false;
-        }
-        rebind(storageNumRow);
-        ImageLoader.getInstance().checkMediaPaths(() -> {
-            CacheControlActivity.resetCalculatedTotalSIze();
-            loadCacheSize();
-        });
-    }
-
     @Override
     protected void onDialogDismiss(Dialog dialog) {
         DownloadController.getInstance(currentAccount).checkAutodownloadSettings();
@@ -645,9 +593,6 @@ public class DataSettingsActivity extends BaseFragment {
                             statsController.getSentBytesCount(2, StatsController.TYPE_TOTAL)
                         );
                         textCell.setTextAndValueAndColorfulIcon(LocaleController.getString(R.string.NetworkUsage), AndroidUtilities.formatFileSize(size), true, R.drawable.msg_filled_datausage, 0xFF55CA47, 0xFF27B434, false);
-                    } else if (position == storageNumRow) {
-                        String value = NekoConfig.cachePath.String();
-                        textCell.setTextAndValueAndColorfulIcon(LocaleController.getString(R.string.StoragePath), value, true, R.drawable.msg_filled_sdcard, 0xFFF09F1B, 0xFFE18A11, false);
                     }
                     // the same text inset as the colorful rows of the main settings screen, which have no dividers
                     textCell.setOffsetFromImage(64);
@@ -847,7 +792,7 @@ public class DataSettingsActivity extends BaseFragment {
         public boolean isRowEnabled(int position) {
             return position == mobileRow || position == roamingRow || position == wifiRow || position == storageUsageRow || position == useLessDataForCallsRow || position == dataUsageRow || position == proxyRow || position == clearDraftsRow ||
                     position == enableCacheStreamRow || position == enableStreamRow || position == enableAllStreamRow || position == enableMkvRow || position == autoplayVideoRow || position == autoplayGifsRow ||
-                    position == storageNumRow || position == saveToGalleryGroupsRow || position == saveToGalleryPeerRow || position == saveToGalleryChannelsRow || position == resetDownloadRow;
+                    position == saveToGalleryGroupsRow || position == saveToGalleryPeerRow || position == saveToGalleryChannelsRow || position == resetDownloadRow;
         }
 
         @Override
@@ -898,7 +843,7 @@ public class DataSettingsActivity extends BaseFragment {
                 return 4;
             } else if (position == mobileRow || position == wifiRow || position == roamingRow || position == saveToGalleryGroupsRow || position == saveToGalleryPeerRow || position == saveToGalleryChannelsRow) {
                 return 5;
-            } else if (position == storageUsageRow || position == dataUsageRow || position == storageNumRow) {
+            } else if (position == storageUsageRow || position == dataUsageRow) {
                 return 6;
             } else {
                 return 1;

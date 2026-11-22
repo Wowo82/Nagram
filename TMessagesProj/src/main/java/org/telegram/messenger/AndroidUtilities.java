@@ -2736,14 +2736,21 @@ public class AndroidUtilities {
     }
 
     public static File getCacheDir() {
+        File file = null;
         try {
-            File file = new File(EnvUtil.getTelegramPath(), "caches");
-            FileUtil.initDir(file);
-            return file;
+            // 对齐官方：缓存根固定是 Android/data/<pkg>/cache，媒体放在 files/Telegram
+            File[] dirs = ApplicationLoader.applicationContext.getExternalCacheDirs();
+            if (dirs != null && dirs.length > 0) {
+                file = dirs[0];
+            }
         } catch (Throwable e) {
             FileLog.e(e);
         }
-        return new File(ApplicationLoader.getDataDirFixed(), "cache/media/caches");
+        if (file == null) {
+            file = ApplicationLoader.getCacheDirFixed();
+        }
+        FileUtil.initDir(file);
+        return file;
     }
 
     public static int dp(float value) {
