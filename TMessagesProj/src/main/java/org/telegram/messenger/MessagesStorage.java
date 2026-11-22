@@ -2686,6 +2686,15 @@ public class MessagesStorage extends BaseController {
             SQLiteCursor filtersCursor = null;
             SQLitePreparedStatement state = null;
             try {
+                // 数据库恢复（DatabaseMigrationHelper.recoverDatabase）的 excludeTables 会跳过
+                // dialog_filter_neko / dialog_filter_ep / dialog_filter_pin_v2 三张表，
+                // 而 createTable() 只在首次建库时执行，恢复出来的库可能完全没有这三张表。
+                // 之后所有文件夹读写都会抛 no such table，首页顶部文件夹标签因此永远不显示。
+                // 这里在读取前确保表存在，缺失时补建，已有则跳过。
+                database.executeFast("CREATE TABLE IF NOT EXISTS dialog_filter_neko(id INTEGER PRIMARY KEY, ord INTEGER, unread_count INTEGER, flags INTEGER, title TEXT, emoticon TEXT, color INTEGER DEFAULT -1, entities BLOB, noanimate INTEGER)").stepThis().dispose();
+                database.executeFast("CREATE TABLE IF NOT EXISTS dialog_filter_ep(id INTEGER, peer INTEGER, PRIMARY KEY (id, peer))").stepThis().dispose();
+                database.executeFast("CREATE TABLE IF NOT EXISTS dialog_filter_pin_v2(id INTEGER, peer INTEGER, pin INTEGER, PRIMARY KEY (id, peer))").stepThis().dispose();
+
                 ArrayList<Long> usersToLoad = new ArrayList<>();
                 ArrayList<Long> chatsToLoad = new ArrayList<>();
                 ArrayList<Integer> encryptedToLoad = new ArrayList<>();
