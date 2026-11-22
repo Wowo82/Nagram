@@ -2131,7 +2131,11 @@ public class MessageObject {
         if (__filterAct == MessageFilterRules.ACTION_SPOILER
                 && filterSpoilerEntity == null && !isRestrictedMessage) {
             final int len = messageOwner.message != null ? messageOwner.message.length() : 0;
-            if (len > 0 && messageOwner.entities != null) {
+            if (len > 0) {
+                // 纯文本消息的 entities 通常是 null，不补一个空列表的话遮罩规则永远不会生效
+                if (messageOwner.entities == null) {
+                    messageOwner.entities = new ArrayList<>();
+                }
                 TLRPC.TL_messageEntitySpoiler spoiler = new TLRPC.TL_messageEntitySpoiler();
                 spoiler.offset = 0;
                 spoiler.length = len;
@@ -4910,8 +4914,10 @@ public class MessageObject {
             return filterAction;
         }
         int result = MessageFilterRules.ACTION_NONE;
-        // 折叠态下 messageText 是占位串、caption 已清空，必须用原文匹配
-        CharSequence filterMessageText = filterCollapsedApplied ? messageOwner.message : messageText;
+        // 优先用服务端下发的原文：messageText 可能经过 BAD_CHARS 处理（长消息会插入零宽字符）、
+        // zalgo 过滤或折叠占位符替换，拿它匹配会出现「短消息能命中、长消息命中不了」
+        CharSequence filterMessageText = messageOwner != null && messageOwner.message != null
+                ? messageOwner.message : messageText;
         CharSequence filterText = caption;
         if (filterText == null && messageText != null && !isMediaEmpty() && !filterCollapsedApplied) {
             // 媒体消息的 caption 要等 generateCaption() 才生成；构造中途只能用原文兜底
@@ -4927,7 +4933,11 @@ public class MessageObject {
             final long viaBotId = messageOwner != null ? messageOwner.via_bot_id : 0L;
             // 本仓库的 TLRPC.Message 没有 via_bot_name 字段，按 id 匹配即可
             final String viaBotName = null;
-            final int fromRules = MessageFilterRules.match(filterMessageText, filterText, getSenderId(), viaBotId, viaBotName);
+            // 带 caption 的媒体消息 messageText 就是 caption，文件名不在里面；
+            // 单独取出来作为额外匹配串，否则按 .apk / .zip 这类后缀过滤会漏。
+            // 只对 document 取（照片没有用户可见文件名，且 photo 字段可能为空）
+            final String fileName = getDocument() != null ? getFileName() : null;
+            final int fromRules = MessageFilterRules.match(filterMessageText, filterText, fileName, getSenderId(), viaBotId, viaBotName);
             if (fromRules > result) {
                 result = fromRules;
             }
@@ -4972,7 +4982,11 @@ public class MessageObject {
         }
         if (act == MessageFilterRules.ACTION_SPOILER && filterSpoilerEntity == null && !isRestrictedMessage) {
             final int len = messageOwner != null && messageOwner.message != null ? messageOwner.message.length() : 0;
-            if (len > 0 && messageOwner.entities != null) {
+            if (len > 0) {
+                // 同上：纯文本消息 entities 为 null 时要补列表，否则遮罩不生效
+                if (messageOwner.entities == null) {
+                    messageOwner.entities = new ArrayList<>();
+                }
                 TLRPC.TL_messageEntitySpoiler spoiler = new TLRPC.TL_messageEntitySpoiler();
                 spoiler.offset = 0;
                 spoiler.length = len;
