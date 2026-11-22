@@ -205,8 +205,13 @@ public class MessageFilterRulesActivity extends BaseNekoSettingsActivity {
         button.setId(id);
         button.setText(text);
         button.setTextColor(Theme.getColor(Theme.key_dialogTextBlack, resourcesProvider));
-        button.setChecked(checked);
         group.addView(button);
+        // 必须先把按钮挂到 RadioGroup 上再勾选：先 setChecked 再 addView 时，
+        // 某些系统版本里 RadioGroup 的 mCheckedId 不会跟着更新，
+        // 保存时 getCheckedRadioButtonId() 返回 -1，编排好的规则会被重置成默认类型
+        if (checked) {
+            button.setChecked(true);
+        }
         return button;
     }
 
@@ -264,17 +269,26 @@ public class MessageFilterRulesActivity extends BaseNekoSettingsActivity {
                 .setTitle(editing ? "编辑规则" : "添加规则")
                 .setView(container)
                 .setPositiveButton("保存", (dialog, which) -> {
-                    int matchType = matchGroup.getCheckedRadioButtonId() == -1
-                            ? MessageFilterRules.MATCH_CONTAINS
-                            : matchGroup.getCheckedRadioButtonId() - 1000;
-                    int action = actionGroup.getCheckedRadioButtonId() == -1
-                            ? MessageFilterRules.ACTION_HIDE
-                            : actionGroup.getCheckedRadioButtonId() - 2000;
+                    // 编辑已有规则时，勾选状态万一没回填上（RadioGroup 返回 -1），
+                    // 必须沿用原类型而不是退化成默认的「包含文本」——
+                    // 否则一条正则规则会在用户毫无察觉的情况下变成永远命中不了的死规则
+                    final int checkedMatchId = matchGroup.getCheckedRadioButtonId();
+                    int matchType = checkedMatchId == -1
+                            ? (source != null ? source.matchType : MessageFilterRules.MATCH_CONTAINS)
+                            : checkedMatchId - 1000;
+                    final int checkedActionId = actionGroup.getCheckedRadioButtonId();
+                    int action = checkedActionId == -1
+                            ? (source != null ? source.action : MessageFilterRules.ACTION_HIDE)
+                            : checkedActionId - 2000;
                     String value = valueEdit.getText().toString().trim();
                     boolean caseInsensitive = caseInsensitiveBox.isChecked();
 
                     if (matchType != MessageFilterRules.MATCH_VIA_BOT && TextUtils.isEmpty(value)) {
                         showError("匹配内容不能为空");
+                        return;
+                    }
+                    if (matchType == MessageFilterRules.MATCH_CONTAINS && MessageFilterRules.looksLikeRegex(value)) {
+                        showError("这段内容是正则表达式，请把匹配类型改为「正则表达式」，否则这条规则永远不会命中");
                         return;
                     }
                     if (matchType == MessageFilterRules.MATCH_REGEX) {
@@ -361,6 +375,10 @@ public class MessageFilterRulesActivity extends BaseNekoSettingsActivity {
         String base = type + " · " + action;
         if (!rule.enabled) {
             base = base + " · 已禁用";
+        } else if (rule.matchType == MessageFilterRules.MATCH_CONTAINS
+                && MessageFilterRules.looksLikeRegex(rule.matchValue)) {
+            // 直接在列表里点出来，否则这种规则看起来完全正常，实际一条都命中不了
+            base = base + " · 内容是正则，需改类型";
         }
         return base;
     }
