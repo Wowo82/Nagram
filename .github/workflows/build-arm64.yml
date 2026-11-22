@@ -56,8 +56,6 @@ jobs:
       - name: Build release
         env:
           LOCAL_PROPERTIES: ${{ secrets.LOCAL_PROPERTIES }}
-          TELEGRAM_APP_ID: ${{ secrets.TELEGRAM_APP_ID }}
-          TELEGRAM_APP_HASH: ${{ secrets.TELEGRAM_APP_HASH }}
         run: ./gradlew TMessagesProj:assembleRelease --build-cache --no-configuration-cache
       - name: Upload APK
         uses: actions/upload-artifact@v4
