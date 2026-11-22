@@ -4916,34 +4916,76 @@ public class MessageObject {
         int result = MessageFilterRules.ACTION_NONE;
         // 优先用服务端下发的原文：messageText 可能经过 BAD_CHARS 处理（长消息会插入零宽字符）、
         // zalgo 过滤或折叠占位符替换，拿它匹配会出现「短消息能命中、长消息命中不了」
-        CharSequence filterMessageText = messageOwner != null && messageOwner.message != null
-                ? messageOwner.message : messageText;
-        CharSequence filterText = caption;
-        if (filterText == null && messageText != null && !isMediaEmpty() && !filterCollapsedApplied) {
-            // 媒体消息的 caption 要等 generateCaption() 才生成；构造中途只能用原文兜底
-            filterText = messageOwner.message;
-        }
+        final CharSequence filterMessageText = filterProbeText();
+        final CharSequence filterText = filterProbeCaption();
+        final String fileName = filterProbeFileName();
+        final long senderId = getSenderId();
+        final long viaBotId = messageOwner != null ? messageOwner.via_bot_id : 0L;
+        // 本仓库的 TLRPC.Message 没有 via_bot_name 字段，按 id 匹配即可
+        final String viaBotName = null;
         final Pattern filterPattern = MessageFilter.getPattern();
+        boolean byMessageFilter = false;
         if (filterPattern != null
                 && ((filterMessageText != null && filterPattern.matcher(filterMessageText).find())
                 || (filterText != null && filterPattern.matcher(filterText).find()))) {
             result = MessageFilterRules.ACTION_HIDE;
+            byMessageFilter = true;
         }
         if (result != MessageFilterRules.ACTION_HIDE) {
-            final long viaBotId = messageOwner != null ? messageOwner.via_bot_id : 0L;
-            // 本仓库的 TLRPC.Message 没有 via_bot_name 字段，按 id 匹配即可
-            final String viaBotName = null;
             // 带 caption 的媒体消息 messageText 就是 caption，文件名不在里面；
             // 单独取出来作为额外匹配串，否则按 .apk / .zip 这类后缀过滤会漏。
             // 只对 document 取（照片没有用户可见文件名，且 photo 字段可能为空）
-            final String fileName = getDocument() != null ? getFileName() : null;
-            final int fromRules = MessageFilterRules.match(filterMessageText, filterText, fileName, getSenderId(), viaBotId, viaBotName);
+            final int fromRules = MessageFilterRules.match(filterMessageText, filterText, fileName, senderId, viaBotId, viaBotName);
             if (fromRules > result) {
                 result = fromRules;
             }
         }
         filterAction = result;
+        // 探针：命中就留痕，日志里能直接看到是哪条规则、依据哪段文本命中的
+        if (result != MessageFilterRules.ACTION_NONE) {
+            MessageFilterRules.logHit(getId(), filterMessageText, filterText, fileName, senderId, viaBotId, viaBotName, result, byMessageFilter);
+        }
         return result;
+    }
+
+    /**
+     * 探针：输出本条消息的过滤判定详情，无论命中与否。
+     *
+     * <p>供批次汇总在「有规则但整批零命中」时采样调用，用来回答
+     * 「为什么这条没被过滤」——是文本不在匹配串、还是规则压根没加载。</p>
+     */
+    public void dumpFilterProbe() {
+        if (!MessageFilterRules.probeEnabled()) {
+            return;
+        }
+        final CharSequence filterMessageText = filterProbeText();
+        final CharSequence filterText = filterProbeCaption();
+        final String fileName = filterProbeFileName();
+        final long viaBotId = messageOwner != null ? messageOwner.via_bot_id : 0L;
+        final int act = getFilterAction();
+        if (act != MessageFilterRules.ACTION_NONE) {
+            return; // 命中的已经在 getFilterAction 里打过，避免重复
+        }
+        MessageFilterRules.logMiss(getId(), filterMessageText, filterText, fileName, getSenderId(), viaBotId, null);
+    }
+
+    /** 规则匹配用的正文：优先服务端原文，避免 messageText 的字符改写导致漏匹配。 */
+    private CharSequence filterProbeText() {
+        return messageOwner != null && messageOwner.message != null ? messageOwner.message : messageText;
+    }
+
+    /** 规则匹配用的说明文字：媒体 caption 要等 generateCaption() 才有，构造中途用原文兜底。 */
+    private CharSequence filterProbeCaption() {
+        CharSequence c = caption;
+        if (c == null && messageText != null && !isMediaEmpty() && !filterCollapsedApplied && messageOwner != null) {
+            c = messageOwner.message;
+        }
+        return c;
+    }
+
+    /** 规则匹配用的文件名：只对 document 取，照片没有用户可见文件名。 */
+    private String filterProbeFileName() {
+        return getDocument() != null ? getFileName() : null;
     }
 
     /** 规则变化后重算并就地应用动作。 */

@@ -421,6 +421,7 @@ import xyz.nextalone.nagram.helper.MessageHelper;
 import xyz.nextalone.nagram.helper.MessageMenuCompact;
 import xyz.nextalone.nagram.helper.MotionPhotoHelper;
 import xyz.nextalone.nagram.helper.SystemAiServiceHelper;
+import xyz.nextalone.nagram.ui.MessageFilterRules;
 
 @SuppressWarnings("unchecked")
 public class ChatActivity extends BaseFragment implements
@@ -22870,6 +22871,7 @@ public class ChatActivity extends BaseFragment implements
         // 相册的说明文字只挂在其中一条消息上，先把过滤动作传播给同组，
         // 否则下面逐条 isFilterHidden() 只会跳过带文字那条，同组图片/文件仍会显示
         propagateFilterActionInsideGroup(messArr);
+        logFilterProbeBatch("load", messArr);
         LongSparseArray<MessageObject.GroupedMessages> newGroups = null;
         LongSparseArray<MessageObject.GroupedMessages> changedGroups = null;
         MediaController mediaController = MediaController.getInstance();
@@ -23914,6 +23916,7 @@ public class ChatActivity extends BaseFragment implements
                 // 相册只有一条带说明文字，必须先把 HIDE 传播给同组，
                 // 再把会话里已加载的同组消息一起清掉，否则会遗留同组的图片/文件
                 propagateFilterActionInsideGroup(arr);
+                logFilterProbeBatch("incoming", arr);
                 removeLoadedGroupedMessagesForIncoming(arr);
                 for (int a = arr.size() - 1; a >= 0; a--) {
                     MessageObject incoming = arr.get(a);
@@ -28262,6 +28265,52 @@ public class ChatActivity extends BaseFragment implements
     }
 
     /**
+     * 探针：统计一批消息的过滤结果，并输出汇总。
+     *
+     * <p>回答「规则到底有没有作用到界面上」：total 是本批参与判断的消息数，
+     * hide / spoiler / collapse 是各动作的条数。整批零命中时再采样几条明细，
+     * 日志里就能直接看到这些消息的正文、文件名、发送者，便于判断是规则写错还是字段取错。</p>
+     */
+    private void logFilterProbeBatch(String scene, List<MessageObject> list) {
+        if (!MessageFilterRules.probeEnabled()) {
+            return;
+        }
+        if (list == null || list.isEmpty()) {
+            FileLog.d(MessageFilterRules.PROBE_TAG + " batch[" + scene + "] chat=" + dialog_id
+                    + " total=0 " + MessageFilterRules.rulesSummary());
+            return;
+        }
+        int total = 0, hide = 0, spoiler = 0, collapse = 0;
+        final ArrayList<MessageObject> samples = new ArrayList<>();
+        for (int a = 0, N = list.size(); a < N; a++) {
+            final MessageObject object = list.get(a);
+            if (object == null || object.getId() == 0 || object.isDateObject) {
+                continue;
+            }
+            total++;
+            final int act = object.getFilterAction();
+            if (act == MessageFilterRules.ACTION_HIDE) {
+                hide++;
+            } else if (act == MessageFilterRules.ACTION_SPOILER) {
+                spoiler++;
+            } else if (act == MessageFilterRules.ACTION_COLLAPSE) {
+                collapse++;
+            } else if (samples.size() < 3 && object.messageOwner != null && object.messageOwner.message != null) {
+                samples.add(object);
+            }
+        }
+        FileLog.d(MessageFilterRules.PROBE_TAG + " batch[" + scene + "] chat=" + dialog_id
+                + " total=" + total + " hide=" + hide + " spoiler=" + spoiler + " collapse=" + collapse
+                + " " + MessageFilterRules.rulesSummary());
+        // 整批零命中：采样几条，看看实际参与匹配的文本长什么样
+        if (hide + spoiler + collapse == 0) {
+            for (int a = 0, N = samples.size(); a < N; a++) {
+                samples.get(a).dumpFilterProbe();
+            }
+        }
+    }
+
+    /**
      * 在给定列表内部按 grouped_id 传播过滤动作。
      *
      * <p>相册（media group）的多条消息共享同一个 grouped_id，说明文字通常只挂在其中一条上，
@@ -28374,6 +28423,8 @@ public class ChatActivity extends BaseFragment implements
      * 只做 UI 层处理，不删服务器消息、不写数据库。</p>
      */
     private void applyMessageFiltersToLoadedMessages() {
+        // 探针：规则变更后先确认读到的是哪套规则，再谈有没有生效
+        MessageFilterRules.logRuleSet("rules-changed");
         applyMessageFiltersToLoadedMessages(true);
     }
 
@@ -28434,6 +28485,11 @@ public class ChatActivity extends BaseFragment implements
             if (object.isFilterHidden() && idSet.add(object.getId())) {
                 ids.add(object.getId());
             }
+        }
+        logFilterProbeBatch("reapply", messages);
+        if (MessageFilterRules.probeEnabled()) {
+            FileLog.d(MessageFilterRules.PROBE_TAG + " reapply chat=" + dialog_id
+                    + " groups=" + groups.size() + " toRemove=" + ids.size());
         }
         if (!ids.isEmpty()) {
             long channelId = 0;
