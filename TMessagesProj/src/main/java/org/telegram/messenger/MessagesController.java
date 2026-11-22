@@ -2349,7 +2349,14 @@ public class MessagesController extends BaseController implements NotificationCe
                     dialogFiltersLoaded = true;
                     getNotificationCenter().postNotificationName(NotificationCenter.dialogFiltersUpdated);
                     if (remote == 0) {
-                        loadRemoteFilters(false);
+                        if (dialogFilters.isEmpty() && getUserConfig().filtersLoaded) {
+                            // 云端有文件夹、本地表却为空时（重装、恢复备份或数据库恢复后 filtersLoaded 仍是 true），
+                            // 必须强制从服务器重新拉一次，否则首页标签栏会一直是空的
+                            FileLog.d("dialog filters empty, force reload from server");
+                            loadRemoteFilters(true);
+                        } else {
+                            loadRemoteFilters(false);
+                        }
                     }
 
                     if (pinnedRemoteDialogs != null && !pinnedRemoteDialogs.dialogs.isEmpty()) {
