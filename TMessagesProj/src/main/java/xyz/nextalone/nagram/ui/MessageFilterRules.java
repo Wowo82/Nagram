@@ -225,6 +225,16 @@ public final class MessageFilterRules {
      * 有些 via bot 消息只有 username、没有数值 id。
      */
     public static int match(CharSequence text, CharSequence caption, long senderId, long viaBotId, String viaBotName) {
+        return match(text, caption, null, senderId, viaBotId, viaBotName);
+    }
+
+    /**
+     * 带额外匹配串的重载。
+     *
+     * <p>媒体消息带 caption 时，{@code messageText} 只剩说明文字，文件名完全不参与匹配，
+     * 表现为「按文件名后缀过滤时灵时不灵」。调用方把文件名单独传进来即可。</p>
+     */
+    public static int match(CharSequence text, CharSequence caption, CharSequence extra, long senderId, long viaBotId, String viaBotName) {
         List<Compiled> rules = compiled();
         if (rules.isEmpty()) return ACTION_NONE;
         int best = ACTION_NONE;
@@ -235,19 +245,22 @@ public final class MessageFilterRules {
                     Pattern p = c.pattern;
                     if (p == null) continue;
                     hit = (text != null && p.matcher(text).find())
-                            || (caption != null && p.matcher(caption).find());
+                            || (caption != null && p.matcher(caption).find())
+                            || (extra != null && p.matcher(extra).find());
                     break;
                 }
                 case MATCH_CONTAINS: {
                     String needle = c.rule.matchValue;
                     boolean ci = c.rule.caseInsensitive;
-                    hit = containsText(text, needle, ci) || containsText(caption, needle, ci);
+                    hit = containsText(text, needle, ci)
+                            || containsText(caption, needle, ci)
+                            || containsText(extra, needle, ci);
                     break;
                 }
                 case MATCH_SENDER_ID: {
                     long target = parseLong(c.rule.matchValue, Long.MIN_VALUE);
                     if (target == Long.MIN_VALUE) continue;
-                    hit = senderId == target;
+                    hit = samePeer(senderId, target);
                     break;
                 }
                 case MATCH_VIA_BOT: {
@@ -299,6 +312,30 @@ public final class MessageFilterRules {
         }
         String s = src.toString().toLowerCase(Locale.ROOT);
         return s.contains(needle.toLowerCase(Locale.ROOT));
+    }
+
+    /**
+     * 发送者 ID 比较，兼容几种常见写法。
+     *
+     * <p>同一个频道可能拿到两种值：普通消息走 {@code from_id} 得到 {@code -channelId}，
+     * 而 {@code post} 分支直接返回正的 {@code channel_id}；超级群/频道又常被写成
+     * {@code -100xxxxxxxxxx}。用户只填一种写法时另一种就匹配不到，表现为「规则时灵时不灵」。
+     * 这里统一剥掉符号与 -100 前缀再比。</p>
+     */
+    private static boolean samePeer(long a, long b) {
+        if (a == 0 || b == 0) {
+            return false;
+        }
+        if (a == b) {
+            return true;
+        }
+        return barePeerId(a) == barePeerId(b);
+    }
+
+    private static long barePeerId(long id) {
+        final long v = id < 0 ? -id : id;
+        // -100xxxxxxxxxx 形式的超级群 / 频道
+        return v >= 1000000000000L ? v - 1000000000000L : v;
     }
 
     private static long parseLong(String value, long fallback) {
