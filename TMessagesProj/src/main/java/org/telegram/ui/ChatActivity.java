@@ -22867,6 +22867,9 @@ public class ChatActivity extends BaseFragment implements
         if (!chatWasReset && (load_type == 2 || load_type == 1) && messArr.isEmpty() && !isCache) {
             forwardEndReached[0] = true;
         }
+        // 相册的说明文字只挂在其中一条消息上，先把过滤动作传播给同组，
+        // 否则下面逐条 isFilterHidden() 只会跳过带文字那条，同组图片/文件仍会显示
+        propagateFilterActionInsideGroup(messArr);
         LongSparseArray<MessageObject.GroupedMessages> newGroups = null;
         LongSparseArray<MessageObject.GroupedMessages> changedGroups = null;
         MediaController mediaController = MediaController.getInstance();
@@ -23907,7 +23910,11 @@ public class ChatActivity extends BaseFragment implements
                 if (!scheduled) {
                     invalidatePaidMessagesPriceOnIncoming(arr);
                 }
-                // 新到达的消息同样走过滤，命中规则的直接丢弃
+                // 新到达的消息同样走过滤，命中规则的直接丢弃。
+                // 相册只有一条带说明文字，必须先把 HIDE 传播给同组，
+                // 再把会话里已加载的同组消息一起清掉，否则会遗留同组的图片/文件
+                propagateFilterActionInsideGroup(arr);
+                removeLoadedGroupedMessagesForIncoming(arr);
                 for (int a = arr.size() - 1; a >= 0; a--) {
                     MessageObject incoming = arr.get(a);
                     if (incoming != null && incoming.getId() != 0 && incoming.isFilterHidden()) {
@@ -28252,6 +28259,111 @@ public class ChatActivity extends BaseFragment implements
             sponsoredMessagesCount++;
         }
         return sponsoredMessagesCount;
+    }
+
+    /**
+     * 在给定列表内部按 grouped_id 传播过滤动作。
+     *
+     * <p>相册（media group）的多条消息共享同一个 grouped_id，说明文字通常只挂在其中一条上，
+     * 关键词过滤也只能命中那一条。规则变更时 {@link #applyMessageFiltersToLoadedMessages}
+     * 已经做过整组传播，但「新消息到达」和「历史消息加载」这两条路径此前只逐条判断，
+     * 于是同组的图片 / 视频 / 文件会残留在会话里，看起来像屏蔽只生效了一半。</p>
+     */
+    private void propagateFilterActionInsideGroup(List<MessageObject> list) {
+        if (list == null || list.size() < 2) {
+            return;
+        }
+        LongSparseArray<Integer> groupActions = null;
+        for (int a = 0, N = list.size(); a < N; a++) {
+            final MessageObject object = list.get(a);
+            if (object == null || object.getId() == 0 || object.isDateObject) {
+                continue;
+            }
+            final int action = object.getFilterAction();
+            if (action == xyz.nextalone.nagram.ui.MessageFilterRules.ACTION_NONE) {
+                continue;
+            }
+            final long groupId = object.getGroupId();
+            if (groupId == 0) {
+                continue;
+            }
+            if (groupActions == null) {
+                groupActions = new LongSparseArray<>();
+            }
+            final Integer old = groupActions.get(groupId);
+            if (old == null || action > old) {
+                groupActions.put(groupId, action);
+            }
+        }
+        if (groupActions == null) {
+            return;
+        }
+        for (int a = 0, N = list.size(); a < N; a++) {
+            final MessageObject object = list.get(a);
+            if (object == null) {
+                continue;
+            }
+            final Integer action = groupActions.get(object.getGroupId());
+            if (action != null) {
+                object.applyGroupFilterAction(action);
+            }
+        }
+    }
+
+    /**
+     * 新消息命中过滤时，把会话里已经加载的同组消息一并移除。
+     *
+     * <p>相册可能被拆成多条 update 下发：带说明文字的那条被丢弃时，
+     * 同组先到的图片 / 文件已经在 {@link #messages} 里，需要单独清掉。</p>
+     */
+    private void removeLoadedGroupedMessagesForIncoming(ArrayList<MessageObject> incoming) {
+        if (incoming == null || incoming.isEmpty() || messages == null || messages.isEmpty()) {
+            return;
+        }
+        LongSparseArray<Boolean> hitGroups = null;
+        final HashSet<Integer> incomingIds = new HashSet<>();
+        for (int a = 0, N = incoming.size(); a < N; a++) {
+            final MessageObject object = incoming.get(a);
+            if (object == null) {
+                continue;
+            }
+            incomingIds.add(object.getId());
+            if (object.getId() == 0 || !object.isFilterHidden()) {
+                continue;
+            }
+            final long groupId = object.getGroupId();
+            if (groupId != 0) {
+                if (hitGroups == null) {
+                    hitGroups = new LongSparseArray<>();
+                }
+                hitGroups.put(groupId, Boolean.TRUE);
+            }
+        }
+        if (hitGroups == null) {
+            return;
+        }
+        final ArrayList<Integer> ids = new ArrayList<>();
+        final HashSet<Integer> idSet = new HashSet<>();
+        for (int a = 0, N = messages.size(); a < N; a++) {
+            final MessageObject object = messages.get(a);
+            if (object == null || object.getId() == 0 || object.isDateObject) {
+                continue;
+            }
+            if (hitGroups.indexOfKey(object.getGroupId()) < 0) {
+                continue;
+            }
+            object.applyGroupFilterAction(xyz.nextalone.nagram.ui.MessageFilterRules.ACTION_HIDE);
+            if (object.isFilterHidden() && !incomingIds.contains(object.getId()) && idSet.add(object.getId())) {
+                ids.add(object.getId());
+            }
+        }
+        if (!ids.isEmpty()) {
+            long channelId = 0;
+            if (currentChat != null && ChatObject.isChannel(currentChat)) {
+                channelId = -dialog_id;
+            }
+            processDeletedMessages(ids, channelId, false);
+        }
     }
 
     /**
