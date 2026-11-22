@@ -2349,10 +2349,18 @@ public class MessagesController extends BaseController implements NotificationCe
                     dialogFiltersLoaded = true;
                     getNotificationCenter().postNotificationName(NotificationCenter.dialogFiltersUpdated);
                     if (remote == 0) {
-                        if (dialogFilters.isEmpty() && getUserConfig().filtersLoaded) {
-                            // 云端有文件夹、本地表却为空时（重装、恢复备份或数据库恢复后 filtersLoaded 仍是 true），
-                            // 必须强制从服务器重新拉一次，否则首页标签栏会一直是空的
-                            FileLog.d("dialog filters empty, force reload from server");
+                        boolean hasCustomFilter = false;
+                        for (int i = 0; i < dialogFilters.size(); i++) {
+                            if (!dialogFilters.get(i).isDefault()) {
+                                hasCustomFilter = true;
+                                break;
+                            }
+                        }
+                        if (!hasCustomFilter && getUserConfig().filtersLoaded) {
+                            // 本地只剩默认的“所有”时（MessagesStorage 在表为空时会自动补一个 id=0 的默认项，
+                            // 所以 dialogFilters 永远不会是空列表），filtersLoaded 仍是 true 会阻止远端拉取，
+                            // 首页文件夹标签栏就再也不显示。这里改为判断“没有任何非默认文件夹”，强制拉一次。
+                            FileLog.d("no custom dialog filters, force reload from server");
                             loadRemoteFilters(true);
                         } else {
                             loadRemoteFilters(false);
